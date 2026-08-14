@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
@@ -26,15 +28,17 @@ const singletonPackages = [
 ]
 
 try {
-  const packed = execFileSync(
-    'npm',
-    ['pack', '--ignore-scripts', '--pack-destination', temp, '--json'],
-    { cwd: root, encoding: 'utf8' },
-  )
-  const packResult = JSON.parse(packed)
-  const tarballName = packResult[0]?.filename
-  if (typeof tarballName !== 'string') throw new Error('npm pack did not return a tarball filename')
-  const tarball = join(temp, basename(tarballName))
+  // 直接从已经通过 build/check-package 的发布文件组装 tarball。这里刻意不调用
+  // npm/pnpm pack，避免 pack 生命周期再次执行 prepare 或接触宿主依赖。
+  const stagingRoot = join(temp, 'staging')
+  const stagingPackage = join(stagingRoot, 'package')
+  mkdirSync(stagingPackage, { recursive: true })
+  for (const file of ['package.json', 'cordis.patch.yml', 'README.md', 'README.zh.md', 'LICENSE']) {
+    cpSync(join(root, file), join(stagingPackage, file))
+  }
+  cpSync(join(root, 'lib'), join(stagingPackage, 'lib'), { recursive: true })
+  const tarball = join(temp, `${pkg.name}-${pkg.version}.tgz`)
+  execFileSync('tar', ['-czf', tarball, '-C', stagingRoot, 'package'])
 
   const dependencies = Object.fromEntries(singletonPackages.map((name) => {
     const version = pkg.devDependencies[name]
