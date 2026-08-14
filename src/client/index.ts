@@ -23,6 +23,8 @@ import type {
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { deliveryPrompt, severityLabel, technicalYaml } from '../types'
 import type { FindingStatus, UxFinding, UxMode } from '../types'
+import type { OutputLanguage } from '../i18n'
+import type { ProductType } from '../product'
 import { UxReportNodeView } from './report-view'
 
 /**
@@ -53,6 +55,8 @@ export interface UxReportChatData {
   title: string
   /** 运行模式：review 才渲染批量确认条（auto 不打断人）。 */
   mode: UxMode
+  language: OutputLanguage
+  productType: ProductType
   findings: ReadonlyArray<UxFindingView>
 }
 
@@ -68,6 +72,8 @@ interface UxReportState {
   reportId: string
   title: string
   mode: UxMode
+  language: OutputLanguage
+  productType: ProductType
   findings: readonly UxFinding[]
 }
 
@@ -98,7 +104,15 @@ interface LegacyFinding {
  * @returns 当前结构的 finding。
  */
 export function normalizeFinding(raw: UxFinding | LegacyFinding): UxFinding {
-  if ('human' in raw && 'technical' in raw) return raw
+  if ('human' in raw && 'technical' in raw) {
+    return {
+      ...raw,
+      technical: {
+        ...raw.technical,
+        evidence_refs: raw.technical.evidence_refs ?? [],
+      },
+    }
+  }
   const legacy = raw as LegacyFinding
   const level = legacy.severity?.level ?? 'P3'
   const locator = legacy.evidence?.locator ?? { file: '' }
@@ -125,6 +139,7 @@ export function normalizeFinding(raw: UxFinding | LegacyFinding): UxFinding {
       category: (legacy.category ?? 'state-coverage') as UxFinding['technical']['category'],
       verified_by: (legacy.evidence?.verified_by ?? 'model') as UxFinding['technical']['verified_by'],
       evidence_level: 'static',
+      evidence_refs: [],
       persona_refs: legacy.persona_refs ?? [],
       severity: {
         impact: (legacy.severity?.impact ?? 'low') as UxFinding['technical']['severity']['impact'],
@@ -148,6 +163,8 @@ function viewData(state: UxReportState): UxReportChatData {
     reportId: state.reportId,
     title: state.title,
     mode: state.mode,
+    language: state.language,
+    productType: state.productType,
     findings: state.findings.map((finding) => ({
       id: finding.id,
       surface: finding.surface,
@@ -156,7 +173,7 @@ function viewData(state: UxReportState): UxReportChatData {
       description: finding.human.description,
       level: finding.technical.severity.level,
       technicalYaml: technicalYaml(finding),
-      deliveryPrompt: deliveryPrompt(finding),
+      deliveryPrompt: deliveryPrompt(finding, state.language),
       status: finding.status,
     })),
   }
@@ -180,6 +197,8 @@ export const uxReportDefinition: ConversationNodeDefinition<UxReportState> = {  
       reportId: match.event.data.reportId,
       title: match.event.data.title,
       mode: match.event.data.mode ?? 'review',
+      language: match.event.data.language ?? 'zh-CN',
+      productType: match.event.data.productType ?? 'other',
       findings: match.event.data.findings.map(normalizeFinding),
     }
   },

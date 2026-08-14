@@ -7,6 +7,7 @@
 
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import type { ConfiguredLanguage } from './i18n'
 import type { ConfiguredMode } from './mode'
 
 export interface Config {
@@ -33,6 +34,8 @@ export interface Config {
   autoScanMaxFiles: number
   /** 两次自动走查之间至少间隔的回合数。 */
   autoScanDebounceTurns: number
+  /** 报告与卡片语言；auto 时优先跟随用户请求，再回退到项目主 README。 */
+  outputLanguage: ConfiguredLanguage
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -51,6 +54,9 @@ export const Config: Schema<Config> = Schema.object({
   autoScanEditTools: Schema.array(String).default(['write', 'edit']),
   autoScanMaxFiles: Schema.number().default(20),
   autoScanDebounceTurns: Schema.number().default(1),
+  outputLanguage: Schema.union([
+    Schema.const('auto'), Schema.const('zh-CN'), Schema.const('en'),
+  ]).default('auto'),
 })
 
 /** 工具共享的内部设置（validate 后的 config 直接即此类型）。 */

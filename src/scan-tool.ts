@@ -17,10 +17,13 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import ts from 'typescript'
+import { extractCssCandidates } from './css'
 import { extractCandidates } from './ast'
+import { isChinese, resolveOutputLanguage, type OutputLanguage } from './i18n'
 import { loadGlossary } from './glossary'
-import { detectStack, gatherFiles, readSourceFile, suggestSourceRoots } from './project'
+import { detectStack, gatherFiles, gatherStyleFiles, readSourceFile, suggestSourceRoots } from './project'
 import type { StackKind } from './project'
+import { normalizeProductType, productReviewFocus, type ProductType } from './product'
 import { RULES } from './rules'
 import { rememberScope } from './scope'
 import {
@@ -38,12 +41,32 @@ const MAX_FILE_BYTES = 512 * 1024
 /** 候选总数上限（约束工具返回体量）。 */
 const MAX_CANDIDATES_TOTAL = 200
 
+const RULE_NAME_EN: Record<string, string> = {
+  'R-01': 'Error message has no next action',
+  'R-02': 'Inconsistent terminology',
+  'R-03': 'Generic copy for irreversible action',
+  'R-04': 'Irreversible action has no confirmation',
+  'R-05': 'Loading state has no empty state',
+  'R-06': 'Success path has no error path',
+  'R-07': 'Submit remains enabled while pending',
+  'R-08': 'No fallback for long content',
+  'R-09': 'Missing dark/light theme adaptation',
+  'R-10': 'Crowded layout or unclear grouping',
+  'R-11': 'Long list has no browsing controls',
+  'R-12': 'Decorative elements conflict with visual language',
+  'R-13': 'Page purpose or primary action is unclear',
+  'R-14': 'Critical task contains redundant interaction',
+}
+
 export interface ScanResult {
   supported: boolean
   stack: string
   reason?: string
   focus?: string
   persona_id?: string
+  language: OutputLanguage
+  product_type: ProductType
+  review_focus: readonly string[]
   files: Array<{ path: string; size: number }>
   file_count: number
   truncated: boolean
@@ -58,7 +81,7 @@ const CANDIDATE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    rule: { type: 'string', description: '规则 ID：R-01 … R-09' },
+    rule: { type: 'string', description: '规则 ID：R-01 … R-14' },
     file: { type: 'string', description: '相对项目根的文件路径（locator）' },
     symbol: { type: 'string', description: '组件 / 符号级定位' },
     line: { type: 'number', description: '行号（可选）' },
@@ -70,15 +93,24 @@ const CANDIDATE_SCHEMA = {
 
 /** 渲染扫描结果（模型面向文本）。 */
 function renderScanResult(result: ScanResult): string {
+  const zh = isChinese(result.language)
   if (!result.supported) {
-    return [
+    return zh ? [
       `【不支持的技术栈】${result.stack}`,
       result.reason ?? '当前版本支持 React（TypeScript / JavaScript）与 Vue 3。',
       '请明确告知用户不支持，不要给出低质量猜测。',
+    ].join('\n') : [
+      `[Unsupported stack] ${result.stack}`,
+      'This version supports React (TypeScript/JavaScript) and Vue 3.',
+      'Explain the unsupported stack; do not guess at findings.',
     ].join('\n')
   }
   const lines: string[] = []
-  lines.push(`技术栈：${result.stack}；收集源文件 ${result.file_count} 个${result.truncated ? '（已达上限，范围请进一步收敛）' : ''}。`)
+  lines.push(zh
+    ? `技术栈：${result.stack}；收集源码/样式文件 ${result.file_count} 个${result.truncated ? '（已达上限，范围请进一步收敛）' : ''}。`
+    : `Stack: ${result.stack}; collected ${result.file_count} source/style files${result.truncated ? ' (limit reached; narrow the scope)' : ''}.`)
+  lines.push(`${zh ? '产品类型' : 'Product type'}: ${result.product_type}; `
+    + `${zh ? '本类产品重点' : 'review focus'}: ${result.review_focus.join(zh ? '、' : ', ')}`)
   const byRule = new Map<string, AstCandidate[]>()
   for (const candidate of result.candidates) {
     const list = byRule.get(candidate.rule) ?? []
@@ -88,18 +120,25 @@ function renderScanResult(result: ScanResult): string {
   for (const rule of RULES.map((def) => def.id)) {
     const list = byRule.get(rule)
     if (list === undefined || list.length === 0) continue
-    lines.push(`\n## ${rule} ${RULES.find((def) => def.id === rule)?.name ?? ''}（${list.length} 条候选）`)
+    const ruleName = zh ? RULES.find((def) => def.id === rule)?.name ?? '' : RULE_NAME_EN[rule] ?? ''
+    lines.push(`\n## ${rule} ${ruleName} (${list.length})`)
     for (const candidate of list) {
       const where = `${candidate.file}${candidate.line === undefined ? '' : `:${candidate.line}`}`
         + (candidate.symbol === undefined ? '' : `（${candidate.symbol}）`)
-      lines.push(`- [${candidate.verified_by}] ${where}\n  断言：${candidate.note}\n  片段：${candidate.snippet}`)
+      lines.push(zh
+        ? `- [${candidate.verified_by}] ${where}\n  断言: ${candidate.note}\n  片段: ${candidate.snippet}`
+        : `- [${candidate.verified_by}] ${where}\n  Evidence: inspect this candidate against ${ruleName}\n  Snippet: ${candidate.snippet}`)
     }
   }
   if (result.candidates.length === 0) {
-    lines.push('\n（本轮 AST 扫描未产生候选证据；模型仍可自行阅读代码发现语义问题。）')
+    lines.push(zh
+      ? '\n（本轮源码/CSS 扫描未产生候选证据；模型仍可阅读代码发现语义问题。）'
+      : '\n(No source/CSS candidates were produced; inspect the scoped code for semantic issues.)')
   }
   if (result.surface_hints.length > 0) {
-    lines.push('\n## 人话位置名素材（每条 finding 的 surface 从这里选，选不出就据组件名与页面内容拟一个中文名）')
+    lines.push(zh
+      ? '\n## 页面位置素材'
+      : '\n## Page-location hints')
     for (const hint of result.surface_hints) {
       const parts = [
         hint.routeTitle === undefined ? undefined : `路由标题「${hint.routeTitle}」`,
@@ -117,7 +156,7 @@ function renderScanResult(result: ScanResult): string {
       lines.push(`- ${term.canonical}：${term.variants.join(' / ') || '（无变体）'}`)
     }
   }
-  lines.push('\n## 后续步骤')
+  lines.push(zh ? '\n## 后续步骤' : '\n## Next steps')
   for (const line of result.guidance) lines.push(`- ${line}`)
   return lines.join('\n')
 }
@@ -147,6 +186,15 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         type: 'string',
         description: '当前走查的 persona id；多 persona 时逐个画像调用本工具独立走查',
       },
+      language: {
+        type: 'string',
+        description: '输出语言（zh-CN 或 en）；优先跟随当前用户语言，缺省按插件配置和项目 README 推断。',
+      },
+      product_type: {
+        type: 'string',
+        enum: ['consumer', 'enterprise', 'ecommerce', 'content', 'finance', 'healthcare', 'developer-tool', 'internal-tool', 'other'],
+        description: '根据 README、路由和当前业务流程判断的产品类型。',
+      },
     },
     output: {
       schema: {
@@ -158,6 +206,9 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           reason: { type: 'string' },
           focus: { type: 'string' },
           persona_id: { type: 'string' },
+          language: { type: 'string' },
+          product_type: { type: 'string' },
+          review_focus: { type: 'array', items: { type: 'string' } },
           files: {
             type: 'array',
             items: {
@@ -210,12 +261,18 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
       if (cwd === undefined) {
         throw new Error('ux_scan：当前会话没有工作目录（cwd），无法定位项目')
       }
+      const language = resolveOutputLanguage(cwd, config.outputLanguage, args.language)
+      const productType = normalizeProductType(args.product_type)
+      const reviewFocus = productReviewFocus(productType, language)
       const stack = detectStack(cwd)
       if (!stack.supported) {
         return {
           supported: false,
           stack: stack.stack,
           reason: stack.reason,
+          language,
+          product_type: productType,
+          review_focus: reviewFocus,
           files: [],
           file_count: 0,
           truncated: false,
@@ -227,6 +284,12 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
       }
       const stackKind: StackKind = stack.kind ?? 'react-ts'
       const gathered = gatherFiles(cwd, args.paths ?? [], config.excludePatterns, config.maxScanFiles, stackKind)
+      const styles = gatherStyleFiles(
+        cwd,
+        args.paths ?? [],
+        config.excludePatterns,
+        Math.max(1, Math.floor(config.maxScanFiles / 3)),
+      )
       const options = {
         maxPerRule: config.maxCandidatesPerRule,
         maxPerFile: config.maxCandidatesPerFile,
@@ -255,11 +318,23 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         let extracted: AstCandidate[]
         if (stackKind === 'vue' && file.path.endsWith('.vue')) {
           extracted = extractVueCandidates(file.path, source, options)
+          extracted.push(...extractCssCandidates(file.path, source, options))
         } else if (stackKind === 'vue') {
           extracted = extractCandidates(file.path, source, options, ts.ScriptKind.TS)
         } else {
           extracted = extractCandidates(file.path, source, options, ts.ScriptKind.TSX)
         }
+        candidates.push(...extracted.slice(0, MAX_CANDIDATES_TOTAL - candidates.length))
+      }
+      for (const file of styles.files) {
+        if (candidates.length >= MAX_CANDIDATES_TOTAL) break
+        let source: string
+        try {
+          source = readSourceFile(cwd, file, MAX_FILE_BYTES)
+        } catch {
+          continue
+        }
+        const extracted = extractCssCandidates(file.path, source, options)
         candidates.push(...extracted.slice(0, MAX_CANDIDATES_TOTAL - candidates.length))
       }
 
@@ -271,33 +346,52 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
       })
 
       // 记录本次范围：隐式确认要靠它区分「扫了没发现」与「根本没扫」。
-      rememberScope(agent.session.id, gathered.files.map((file) => file.path), surfaceIndex)
+      const allFiles = [...gathered.files, ...styles.files]
+      rememberScope(agent.session.id, allFiles.map((file) => file.path), surfaceIndex)
 
       const glossary = loadGlossary(cwd).terms
       return {
         supported: true,
         stack: stack.stack,
+        language,
+        product_type: productType,
+        review_focus: reviewFocus,
         ...(args.focus === undefined ? {} : { focus: args.focus }),
         ...(args.persona_id === undefined ? {} : { persona_id: args.persona_id }),
-        files: gathered.files,
-        file_count: gathered.files.length,
-        truncated: gathered.truncated,
+        files: allFiles,
+        file_count: allFiles.length,
+        truncated: gathered.truncated || styles.truncated,
         candidates,
         surface_hints: surfaceHints,
         glossary,
-        guidance: [
+        guidance: (isChinese(language) ? [
           '用 read 工具阅读候选的 file:line 片段核实断言；snippet 已附在候选上。',
-          '每条 finding 必须给 surface（人话页面名，如"管理员页面"）：优先用 surface_hints 里的路由标题 / h1 / 导航文案，'
-            + '都没有就据组件名与页面内容拟一个中文名称；拟不出时用路由路径，绝不能用文件路径——文件路径对人没有意义。',
+          '每条 finding 必须给开发者可理解的 surface（如"管理员页面"）：优先用 surface_hints 里的路由标题 / h1 / 导航文案，'
+            + '都没有就据组件名与页面内容拟名；拟不出时用路由路径，不能用文件路径。',
           HUMAN_COPY_RULE,
-          '按当前 persona 判定每条候选是否成立；AST 覆盖不到的语义问题（R-01 文案质量、R-03 是否真不可逆、R-02 同义判定）由你阅读代码后补充。',
+          `按 ${productType} 产品重点（${reviewFocus.join('、')}）和当前 persona 判定，不套用统一的信息密度或流程标准。`,
+          'CSS/布局、Emoji、标题缺失候选只是截图检查入口，不能直接定稿。',
+          '如果浏览器/截图工具可用且项目能打开，检查相关路由与视口并记录截图/DOM/尺寸引用；否则保持 static。',
+          '只有实际按 persona 完成关键任务并记录步骤，才能使用 interactive。',
+          'R-10/R-12/R-13 至少需要 rendered；R-14 至少需要 interactive。证据不足时丢弃，不得升级标签。',
           'R-09 候选已由 AST 求证（verified_by=ast），无需再核实颜色本身，直接采用。',
           '每条 finding 必须带 locator（file 必填，尽量带 symbol）；指不到位置的候选直接丢弃。',
           '拿不准的候选宁可丢弃——"发现问题总数"不是目标，宁缺毋滥。',
           '本轮无一级 / 二级问题时才执行 R-02 术语检查（条件触发），只对新增/变更术语做增量判断。',
           '多 persona 走查时：换 persona_id 重复本工具独立走查，最后统一调用一次 ux_report 合并定稿。',
           `可选范围建议：${suggestSourceRoots(cwd).join(', ') || '（未发现常规源码目录）'}`,
-        ],
+        ] : [
+          'Read each candidate at file:line and verify the attached source snippet.',
+          'Use a developer-readable page/flow name for surface; use route/title/heading hints, never a file path.',
+          `Judge candidates for the current persona and ${productType} product focus: ${reviewFocus.join(', ')}.`,
+          'CSS/layout, Emoji, and missing-heading candidates are inspection leads, not final visual findings.',
+          'When browser/screenshot tools and a runnable app are available, inspect the route and viewport and record screenshot/DOM/measurement references; otherwise remain static.',
+          'Use interactive only after completing the persona task and recording the steps.',
+          'R-10/R-12/R-13 require rendered evidence; R-14 requires interactive evidence. Drop findings that do not meet the evidence threshold.',
+          'R-09 candidates are AST-verified and can be used as static findings.',
+          'Every finding needs a file locator and persona_refs. Prefer precision over finding count.',
+          `Suggested roots: ${suggestSourceRoots(cwd).join(', ') || '(none found)'}`,
+        ]),
       } satisfies ScanResult
     },
   })

@@ -8,7 +8,7 @@
  *   （R-01 错误分支文案、R-03 泛化确认调用、R-04 破坏性调用路径、R-06 异步
  *   无 catch）。块内行号被平移到整个 .vue 文件的行号（locator 精度）。
  * - `<template>` 块：用 `@vue/compiler-dom` 的 `baseParse` 得到真实模板 AST
- *   （ElementNode / DirectiveNode / InterpolationNode…），按 9 条规则目录在
+ *   （ElementNode / DirectiveNode / InterpolationNode…），按规则目录在
  *   结构节点上提取候选——v-if/v-for/@click/:class/:style 都是结构化节点，
  *   不会把注释、字符串常量误判进来（对齐 spec 附录 A.1 的"为什么不用正则"）。
  *
@@ -28,8 +28,8 @@ import type {
 import { extractCandidates } from './ast'
 import type { AstCandidate, AstExtractOptions } from './ast'
 import {
-  ACTION_WORD, COLOR_CLASS, COLOR_LITERAL_SEARCH, EMPTY_PATTERN,
-  GENERIC_CONFIRM, LABEL_ATTRS, LOADING_PATTERN, SUBMIT_HANDLER,
+  ACTION_WORD, COLOR_CLASS, COLOR_LITERAL_SEARCH, EMOJI_PATTERN, EMPTY_PATTERN,
+  GENERIC_CONFIRM, LABEL_ATTRS, LIST_CONTROL_PATTERN, LOADING_PATTERN, SUBMIT_HANDLER,
   TRUNCATION_PATTERN,
 } from './ast'
 
@@ -52,6 +52,10 @@ interface TemplateWalkState {
   templateText: string
   styleText: string
   hasFor: boolean
+  forSite: { line: number; snippet: string } | undefined
+  actionCount: number
+  firstAction: { line: number; snippet: string } | undefined
+  headingCount: number
   loadingSite: { line: number; snippet: string } | undefined
 }
 
@@ -156,7 +160,9 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
           break
         }
         case NodeTypes.TEXT: {
-          recordTerm(ctx, (child as TextNode).content, child.loc.start.line)
+          const textNode = child as TextNode
+          recordVisualText(ctx, textNode.content, textNode.loc.start.line)
+          recordTerm(ctx, textNode.content, textNode.loc.start.line)
           break
         }
         case NodeTypes.INTERPOLATION: {
@@ -194,6 +200,15 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
     parentEl: ElementNode | null,
     grandEl: ElementNode | null,
   ): boolean => {
+    const actionLike = /^(?:button|a|input|select|textarea)$/iu.test(el.tag)
+      || /Button|Link|Select|Input|MenuItem/iu.test(el.tag)
+    if (actionLike) {
+      state.actionCount += 1
+      state.firstAction ??= { line: el.loc.start.line, snippet: snippetOf(el) }
+    }
+    if (/^h[1-2]$/iu.test(el.tag) || /PageTitle|Heading|Header/iu.test(el.tag)) {
+      state.headingCount += 1
+    }
     const isConfirmEl = CONFIRM_TAG.test(el.tag)
     // 先走子级（R-04 需要"子树内是否有确认元素"的后验信息）。
     const confirmInSubtree = walkChildren(el.children, el, parentEl)
@@ -209,7 +224,12 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
     for (const prop of el.props) {
       if (prop.type === NodeTypes.ATTRIBUTE) {
         const attr = prop as AttributeNode
-        if (attr.value !== undefined) attrs.set(attr.name, attr.value.content)
+        if (attr.value !== undefined) {
+          attrs.set(attr.name, attr.value.content)
+          if (LABEL_ATTRS.has(attr.name)) {
+            recordVisualText(ctx, attr.value.content, prop.loc.start.line)
+          }
+        }
         if (attr.name === 'disabled') covered = true
         // R-09：静态 class 属性写死颜色类且无 dark: 变体。
         if (attr.name === 'class' && attr.value !== undefined) {
@@ -275,7 +295,10 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
         if (directive.name === 'if' && LOADING_PATTERN.test(expSource) && state.loadingSite === undefined) {
           state.loadingSite = { line: prop.loc.start.line, snippet: snippetOf(el) }
         }
-        if (directive.name === 'for') state.hasFor = true
+        if (directive.name === 'for') {
+          state.hasFor = true
+          state.forSite ??= { line: prop.loc.start.line, snippet: snippetOf(el) }
+        }
 
         // R-01：错误条件分支的用户可见文案。
         if (directive.name === 'if' && ERROR_CONDITION.test(expSource)) {
@@ -341,6 +364,46 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
   }
 
   walkChildren(root.children, null, null)
+
+  if (state.forSite !== undefined && !LIST_CONTROL_PATTERN.test(state.templateText)) {
+    addVueCandidate(ctx, {
+      rule: 'R-11',
+      line: state.forSite.line,
+      snippet: state.forSite.snippet,
+      note: 'v-for 列表未发现分页、虚拟滚动、折叠或显式数量限制；需结合真实数据规模判断影响',
+      verified_by: 'model+ast',
+    })
+  }
+  if (state.actionCount >= 8 && state.firstAction !== undefined) {
+    addVueCandidate(ctx, {
+      rule: 'R-10',
+      line: state.firstAction.line,
+      snippet: state.firstAction.snippet,
+      note: `同一模板静态包含 ${state.actionCount} 个可操作元素，可能造成首屏功能堆叠；必须用真实页面截图确认`,
+      verified_by: 'model+ast',
+    })
+  }
+  if (state.actionCount >= 2 && state.headingCount === 0 && state.firstAction !== undefined) {
+    addVueCandidate(ctx, {
+      rule: 'R-13',
+      line: state.firstAction.line,
+      snippet: state.firstAction.snippet,
+      note: '模板包含多个操作入口，但未发现 h1/h2 或等价页面标题；是否难以理解页面用途必须结合首屏截图确认',
+      verified_by: 'model+ast',
+    })
+  }
+}
+
+function recordVisualText(ctx: VueCandidateCtx, raw: string, line: number): void {
+  const text = raw.replace(/\s+/gu, ' ').trim()
+  if (!EMOJI_PATTERN.test(text)) return
+  addVueCandidate(ctx, {
+    rule: 'R-12',
+    line,
+    snippet: text,
+    note: '用户可见内容使用 Emoji；是否与产品定位、图标体系和视觉语言一致需结合真实截图判断',
+    verified_by: 'model+ast',
+  })
 }
 
 /** R-02 术语候选（去重、每文件 ≤12 条，与 React 引擎同口径）。 */
@@ -476,6 +539,10 @@ export function extractVueCandidates(
         templateText: template.content,
         styleText: descriptor.styles.map((style) => style.content).join('\n'),
         hasFor: false,
+        forSite: undefined,
+        actionCount: 0,
+        firstAction: undefined,
+        headingCount: 0,
         loadingSite: undefined,
       }
       walkTemplate(root, ctx, state)

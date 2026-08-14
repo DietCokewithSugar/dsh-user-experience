@@ -48,7 +48,7 @@ export { Config }
  * @param config - 校验后的插件配置（含 schema 默认值）。
  */
 export function apply(ctx: Context, config: UxConfig): void {
-  ctx.commands.register(createUxCommand(config.mode))
+  ctx.commands.register(createUxCommand(config.mode, config.outputLanguage))
 
   // R2：Persona 注入。文本是每次装配时求值的 provider，按 agent 的 cwd
   // 读取画像文件（mtime 缓存），所以多项目并存时各会话注入各自的画像。
@@ -61,7 +61,7 @@ export function apply(ctx: Context, config: UxConfig): void {
   ctx.tools.register(uxScanTool(config))
   ctx.tools.register(uxReportTool(config))
   ctx.tools.register(uxJudgeTool())
-  ctx.tools.register(uxPersonasWriteTool())
+  ctx.tools.register(uxPersonasWriteTool(config))
 
   // R7：改动触发的自动走查。这一环是"流水线"与"命令行工具"的分界线。
   registerAutoScan(ctx, config)

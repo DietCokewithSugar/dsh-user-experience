@@ -16,6 +16,8 @@
  */
 
 import type {} from '@deepseek-ai/dsh-session/types'
+import type { OutputLanguage } from './i18n'
+import type { ProductType } from './product'
 
 // ── Persona（存储于仓库内 `.ux/personas.yml`，可 git 提交 / review / diff）──
 
@@ -60,14 +62,25 @@ export interface PersonaFile {
 
 // ── UXFinding ────────────────────────────────────────────────────────────────
 
-/** 问题分类：v0.1 三类（微文案 / 状态覆盖 / 主题适配）。 */
-export type FindingCategory = 'microcopy' | 'state-coverage' | 'theme-adaptation'
+/** 问题分类：文案、状态、主题、布局密度、导航指引与交互流程。 */
+export type FindingCategory =
+  | 'microcopy'
+  | 'state-coverage'
+  | 'theme-adaptation'
+  | 'layout-density'
+  | 'navigation-guidance'
+  | 'interaction-flow'
 
-/** 证据等级：v0.1 固定 static；rendered / heuristic 为后续版本预留。 */
-export type EvidenceLevel = 'static'
+/**
+ * 证据等级：
+ * - static：源码 / AST / CSS 证据；
+ * - rendered：真实页面 DOM、元素尺寸或截图证据；
+ * - interactive：按 persona 实际执行任务后的流程证据。
+ */
+export type EvidenceLevel = 'static' | 'rendered' | 'interactive'
 
-/** 验证来源：model（纯模型）/ model+ast（模型判定 + AST 求证）/ ast（纯 AST）。 */
-export type VerifiedBy = 'model' | 'model+ast' | 'ast'
+/** 验证来源：模型、AST 或浏览器证据的组合。 */
+export type VerifiedBy = 'model' | 'model+ast' | 'ast' | 'model+browser'
 
 /** 影响轴：是否阻断该 persona 完成关键任务。 */
 export type Impact = 'high' | 'low'
@@ -141,13 +154,15 @@ export interface FindingHuman {
 /** 给 AI 看的那一半：折叠区，可整块复制粘贴给模型。 */
 export interface FindingTechnical {
   locator: FindingLocator
-  /** 命中规则的 ID（R-01 … R-09）。 */
+  /** 命中规则的 ID（R-01 … R-14）。 */
   rule: string
   category: FindingCategory
   /** 无效问题归因：来自哪条路径（model / model+ast / ast）。 */
   verified_by: VerifiedBy
-  /** 证据等级：v0.1.x 固定 static。 */
+  /** 证据等级：源码、真实渲染或实际任务执行。 */
   evidence_level: EvidenceLevel
+  /** 截图、路由+视口或任务步骤等可复核证据；非 static finding 必须提供。 */
+  evidence_refs: string[]
   /** 命中该问题的 persona 列表；长度 > 1 即为共性问题。 */
   persona_refs: string[]
   severity: {
@@ -205,7 +220,16 @@ const SEVERITY_LABEL: Record<SeverityLevel, string> = {
 }
 
 /** 严重度的人话标签；未知等级退到"待定级"，绝不回落成 `P?` 字面量。 */
-export function severityLabel(level: string): string {
+export function severityLabel(level: string, language: OutputLanguage = 'zh-CN'): string {
+  if (language === 'en') {
+    const labels: Record<SeverityLevel, string> = {
+      P0: 'Level one',
+      P1: 'Level two',
+      P2: 'Level three',
+      P3: 'Level four',
+    }
+    return labels[level as SeverityLevel] ?? 'Unrated'
+  }
   return SEVERITY_LABEL[level as SeverityLevel] ?? '待定级问题'
 }
 
@@ -246,6 +270,7 @@ export function technicalYaml(finding: UxFinding): string {
     `  category: ${tech.category}`,
     `  verified_by: ${tech.verified_by}`,
     `  evidence_level: ${tech.evidence_level}`,
+    `  evidence_refs: [${tech.evidence_refs.join(', ')}]`,
     `  persona_refs: [${tech.persona_refs.join(', ')}]`,
     `  severity: { impact: ${tech.severity.impact}, impact_confidence: ${tech.severity.impact_confidence},`
       + ` reach: ${tech.severity.reach}, level: ${tech.severity.level} }`,
@@ -262,10 +287,27 @@ export function technicalYaml(finding: UxFinding): string {
  * rationale，避免插件基于局部代码替 AI 预设实现方案。locator 只是帮助 AI
  * 开始调查的线索；Prompt 会明确要求先补齐完整项目上下文。
  */
-export function deliveryPrompt(finding: UxFinding): string {
+export function deliveryPrompt(finding: UxFinding, language: OutputLanguage = 'zh-CN'): string {
   const locator = `${finding.technical.locator.file}`
     + (finding.technical.locator.line === undefined ? '' : `:${String(finding.technical.locator.line)}`)
     + (finding.technical.locator.symbol === undefined ? '' : `（${finding.technical.locator.symbol}）`)
+  if (language === 'en') {
+    return [
+      'Please address the confirmed user-experience issue below.',
+      '',
+      `Observed behavior: ${finding.human.headline}`,
+      `What users experience: ${finding.human.description}`,
+      `Scenario: ${finding.surface}`,
+      `Initial location clue: ${locator}`,
+      '',
+      'Requirements:',
+      '1. Read the complete business flow, components, state management, and upstream/downstream calls for this scenario before changing code.',
+      '2. The location above comes from only the portion of the codebase visible to the plugin. Treat it as a starting point, not complete project context.',
+      '3. Determine the root cause and implementation from the project architecture; do not treat this description as a prescribed code change.',
+      '4. If the issue involves UI copy, you may edit the copy directly. Make what happened, its impact, and the next available action clear to users.',
+      `5. Verify that the behavior no longer occurs in "${finding.surface}" and that related normal, error, and edge-case flows have not regressed.`,
+    ].join('\n')
+  }
   return [
     '请处理下面这个已经确认的用户体验问题。',
     '',
@@ -306,6 +348,10 @@ declare module '@deepseek-ai/dsh-session/types' {
       title: string
       /** 本次走查的运行模式：卡片据此决定是否渲染批量确认条。 */
       mode: UxMode
+      /** 报告与卡片固定界面的语言。 */
+      language: OutputLanguage
+      /** 本轮采用的产品/业务类型。 */
+      productType: ProductType
       /**
        * 本次实际扫描到的文件清单（相对项目根）。隐式确认必须区分
        * "扫了没发现"与"根本没扫"，比对时先判断 finding 的位置是否落在

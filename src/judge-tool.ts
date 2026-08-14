@@ -15,12 +15,16 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { recordVerdict } from './history'
-import { severityLabel, type ExplicitVerdict, type FindingStatus, type UxFinding } from './types'
+import { isChinese, type OutputLanguage } from './i18n'
+import type { ProductType } from './product'
+import type { ExplicitVerdict, FindingStatus, UxFinding } from './types'
 
 /** 会话中的"当前报告"。 */
 export interface CurrentReport {
   reportId: string
   title: string
+  language: OutputLanguage
+  productType: ProductType
   findings: readonly UxFinding[]
   /** 折叠 `ux/finding-status` 之后的现状。 */
   statuses: Map<string, FindingStatus>
@@ -33,11 +37,23 @@ export interface CurrentReport {
  * @returns 当前报告；会话里还没有报告时 undefined。
  */
 export function currentReport(session: Session, reportId?: string): CurrentReport | undefined {
-  let latest: { reportId: string; title: string; findings: readonly UxFinding[] } | undefined
+  let latest: {
+    reportId: string
+    title: string
+    language: OutputLanguage
+    productType: ProductType
+    findings: readonly UxFinding[]
+  } | undefined
   for (const event of session.events) {
     if (event.type !== 'ux/report') continue
     if (reportId !== undefined && event.data.reportId !== reportId) continue
-    latest = { reportId: event.data.reportId, title: event.data.title, findings: event.data.findings }
+    latest = {
+      reportId: event.data.reportId,
+      title: event.data.title,
+      language: event.data.language ?? 'zh-CN',
+      productType: event.data.productType ?? 'other',
+      findings: event.data.findings,
+    }
   }
   if (latest === undefined) return undefined
   const statuses = new Map<string, FindingStatus>(
@@ -226,19 +242,32 @@ export function uxJudgeTool(): ToolDefinition {
       const outcome = applyVerdicts(
         agent.session, report, args.targets, verdict, agent.session.header.cwd,
       )
-      const label = verdict === 'rejected' ? '不是问题' : '问题成立'
+      const zh = isChinese(report.language)
+      const label = verdict === 'rejected'
+        ? (zh ? '不是问题' : 'not an issue')
+        : (zh ? '问题成立' : 'confirmed')
       const lines: string[] = []
       if (outcome.applied.length === 0) {
-        lines.push(`没有匹配到要判定的问题：${outcome.unresolved.join('、') || '（未给出目标）'}`)
-        lines.push(`当前报告「${report.title}」共 ${report.findings.length} 条，可以说序号、严重度或问题里的关键词。`)
+        lines.push(zh
+          ? `没有匹配到要判定的问题：${outcome.unresolved.join('、') || '（未给出目标）'}`
+          : `No findings matched: ${outcome.unresolved.join(', ') || '(no target provided)'}`)
+        lines.push(zh
+          ? `当前报告「${report.title}」共 ${report.findings.length} 条，可以说序号、严重度或问题里的关键词。`
+          : `Report "${report.title}" has ${report.findings.length} findings; refer to an ordinal, severity, or headline keyword.`)
       } else {
-        lines.push(`已记录 ${outcome.applied.length} 条为「${label}」：`)
+        lines.push(zh
+          ? `已记录 ${outcome.applied.length} 条为「${label}」：`
+          : `Marked ${outcome.applied.length} finding(s) as ${label}:`)
         for (const item of outcome.applied) lines.push(`- ${item.surface}｜${item.headline}`)
         if (verdict === 'confirmed_explicit') {
-          lines.push('报告卡片现已提供「复制给 AI 的任务 Prompt」：它只描述观察到的现象，并提醒 AI 先补齐完整项目上下文。')
+          lines.push(zh
+            ? '报告卡片现已提供「复制给 AI 的任务 Prompt」：它只描述观察到的现象，并提醒 AI 先补齐完整项目上下文。'
+            : 'The report card now provides a task Prompt for AI. It describes the observed behavior and asks the AI to inspect the complete project context.')
         }
         if (outcome.unresolved.length > 0) {
-          lines.push(`没匹配上的说法：${outcome.unresolved.join('、')}`)
+          lines.push(zh
+            ? `没匹配上的说法：${outcome.unresolved.join('、')}`
+            : `Unmatched selectors: ${outcome.unresolved.join(', ')}`)
         }
       }
       const pending = report.findings.filter((finding) => {
@@ -246,8 +275,10 @@ export function uxJudgeTool(): ToolDefinition {
         return status === 'pending' && !outcome.applied.some((item) => item.id === finding.id)
       })
       if (pending.length > 0) {
-        lines.push(`还有 ${pending.length} 条待判定（其中 ${pending.filter((finding) =>
-          severityLabel(finding.technical.severity.level) === '一级问题').length} 条一级问题）。`)
+        const urgent = pending.filter((finding) => finding.technical.severity.level === 'P0').length
+        lines.push(zh
+          ? `还有 ${pending.length} 条待判定（其中 ${urgent} 条一级问题）。`
+          : `${pending.length} findings remain (${urgent} level-one).`)
       }
       return {
         report_id: report.reportId,

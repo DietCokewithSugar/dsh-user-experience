@@ -9,16 +9,19 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { UxConfig } from './config'
+import { isChinese, resolveOutputLanguage, type OutputLanguage } from './i18n'
 import { writePersonas } from './persona'
 
 export interface PersonasWriteResult {
   written: number
   path: string
+  language: OutputLanguage
   personas: Array<{ id: string; name: string; share: number }>
 }
 
 /** 注册 `ux_personas_write` 工具。 */
-export function uxPersonasWriteTool(): ToolDefinition {
+export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
   return defineTool({
     name: 'ux_personas_write',
     description: [
@@ -28,6 +31,10 @@ export function uxPersonasWriteTool(): ToolDefinition {
       '文件已存在时本调用整体覆盖（用户明确表示修改/增删画像后使用）。',
     ].join(' '),
     parameters: {
+      language: {
+        type: 'string',
+        description: '输出语言（zh-CN 或 en）；跟随当前用户语言。',
+      },
       personas: {
         type: 'array',
         items: {
@@ -64,6 +71,7 @@ export function uxPersonasWriteTool(): ToolDefinition {
         properties: {
           written: { type: 'number' },
           path: { type: 'string' },
+          language: { type: 'string' },
           personas: {
             type: 'array',
             items: {
@@ -80,10 +88,14 @@ export function uxPersonasWriteTool(): ToolDefinition {
       },
       render: (_args, value) => {
         const result = value as PersonasWriteResult
-        const lines = [
+        const lines = isChinese(result.language) ? [
           `已写入 ${result.written} 个目标用户画像到 ${result.path}（可 git 提交、团队共享）：`,
           ...result.personas.map((persona) => `- [${persona.id}] ${persona.name}（share ${persona.share}）`),
           '后续走查将以这些画像作为判定依据；文件已存在时会直接加载，不再重复询问。',
+        ] : [
+          `Wrote ${result.written} target personas to ${result.path} (commit this file to share it with the team):`,
+          ...result.personas.map((persona) => `- [${persona.id}] ${persona.name} (share ${persona.share})`),
+          'Future walkthroughs will use these personas as their evaluation context.',
         ]
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -101,6 +113,7 @@ export function uxPersonasWriteTool(): ToolDefinition {
       return {
         written: written.length,
         path: '.ux/personas.yml',
+        language: resolveOutputLanguage(cwd, config.outputLanguage, args.language),
         personas: written.map((persona) => ({ id: persona.id, name: persona.name, share: persona.share })),
       } satisfies PersonasWriteResult
     },
