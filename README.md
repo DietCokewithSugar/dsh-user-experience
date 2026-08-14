@@ -114,7 +114,7 @@ pnpm test          # 冒烟测试（AST 引擎 / persona / glossary / 矩阵 / �
 - [x] README 声明 v0.1 能力边界（仅源码、仅静态证据、不覆盖视觉类问题）
 - [x] 锁定 DSH 依赖版本（developer preview）
 - [x] 仓库添加 **`dsh-plugin`** topic（官方发现机制）
-- [x] 向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，中英文 README 各加一行（站点合并后自动同步）
+- [x] 向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，中英文 README 各加一行（站点合并后自动同步）——[PR #63 已合并](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63)
 - [ ] 加入官方 Discord 社区（人工操作，见官方文档/仓库的邀请链接）
 
 ## License
