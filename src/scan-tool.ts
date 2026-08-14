@@ -22,6 +22,12 @@ import { loadGlossary } from './glossary'
 import { detectStack, gatherFiles, readSourceFile, suggestSourceRoots } from './project'
 import type { StackKind } from './project'
 import { RULES } from './rules'
+import { rememberScope } from './scope'
+import {
+  collectSurfaceHints, collectVueSurfaceHints, createSurfaceIndex, surfaceCandidatesFor,
+} from './surface'
+import type { SurfaceHint } from './surface'
+import { HUMAN_COPY_RULE } from './human-copy'
 import type { UxConfig } from './config'
 import type { AstCandidate } from './ast'
 import { extractVueCandidates } from './vue'
@@ -42,6 +48,8 @@ export interface ScanResult {
   file_count: number
   truncated: boolean
   candidates: AstCandidate[]
+  /** 人话位置名素材：每条 finding 的 surface 由模型据此选用或拟名。 */
+  surface_hints: SurfaceHint[]
   glossary: Array<{ canonical: string; variants: string[]; note?: string }>
   guidance: string[]
 }
@@ -89,6 +97,19 @@ function renderScanResult(result: ScanResult): string {
   }
   if (result.candidates.length === 0) {
     lines.push('\n（本轮 AST 扫描未产生候选证据；模型仍可自行阅读代码发现语义问题。）')
+  }
+  if (result.surface_hints.length > 0) {
+    lines.push('\n## 人话位置名素材（每条 finding 的 surface 从这里选，选不出就据组件名与页面内容拟一个中文名）')
+    for (const hint of result.surface_hints) {
+      const parts = [
+        hint.routeTitle === undefined ? undefined : `路由标题「${hint.routeTitle}」`,
+        hint.heading === undefined ? undefined : `页面 h1「${hint.heading}」`,
+        hint.navText === undefined ? undefined : `导航文案「${hint.navText}」`,
+        hint.route === undefined ? undefined : `路由 ${hint.route}`,
+        hint.symbol === undefined ? undefined : `组件 ${hint.symbol}`,
+      ].filter((part): part is string => part !== undefined)
+      lines.push(`- ${hint.file}：${parts.join('｜') || '（无素材，请据页面内容拟名）'}`)
+    }
   }
   if (result.glossary.length > 0) {
     lines.push(`\n## 既有术语表（.ux/glossary.yml，仅需对新增/变更术语做增量判断）`)
@@ -148,6 +169,21 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           file_count: { type: 'number' },
           truncated: { type: 'boolean' },
           candidates: { type: 'array', items: CANDIDATE_SCHEMA },
+          surface_hints: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                file: { type: 'string' },
+                route: { type: 'string' },
+                routeTitle: { type: 'string' },
+                heading: { type: 'string' },
+                navText: { type: 'string' },
+                symbol: { type: 'string' },
+              },
+            },
+          },
           glossary: {
             type: 'array',
             items: {
@@ -184,6 +220,7 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           file_count: 0,
           truncated: false,
           candidates: [],
+          surface_hints: [],
           glossary: [],
           guidance: ['告知用户不支持的原因（spec 边界场景 9），不要给出低质量猜测。'],
         } satisfies ScanResult
@@ -195,14 +232,22 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         maxPerFile: config.maxCandidatesPerFile,
       }
       const candidates: AstCandidate[] = []
+      const surfaceIndex = createSurfaceIndex()
       for (const file of gathered.files) {
-        if (candidates.length >= MAX_CANDIDATES_TOTAL) break
         let source: string
         try {
           source = readSourceFile(cwd, file, MAX_FILE_BYTES)
         } catch {
           continue
         }
+        // 位置素材要覆盖全部文件（路由表往往不在候选文件里），候选提取才受上限约束。
+        if (stackKind === 'vue' && file.path.endsWith('.vue')) {
+          collectVueSurfaceHints(surfaceIndex, file.path, source)
+        } else {
+          collectSurfaceHints(surfaceIndex, file.path, source,
+            stackKind === 'vue' ? ts.ScriptKind.TS : ts.ScriptKind.TSX)
+        }
+        if (candidates.length >= MAX_CANDIDATES_TOTAL) continue
         // 按技术栈分派引擎：
         // - Vue SFC：SFC 拆分 + 模板 AST（script 块内部复用 TS 引擎）；
         // - Vue 项目的独立 .ts/.js 模块：按普通 TS 解析（无 JSX）；
@@ -217,6 +262,17 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         }
         candidates.push(...extracted.slice(0, MAX_CANDIDATES_TOTAL - candidates.length))
       }
+
+      // 位置素材只对"本轮出了候选的文件"输出，避免把整份路由表倒给模型。
+      const hintFiles = new Set(candidates.map((candidate) => candidate.file))
+      const surfaceHints: SurfaceHint[] = [...hintFiles].map((file) => {
+        const { candidates: _ordered, ...hint } = surfaceCandidatesFor(surfaceIndex, file)
+        return hint satisfies SurfaceHint
+      })
+
+      // 记录本次范围：隐式确认要靠它区分「扫了没发现」与「根本没扫」。
+      rememberScope(agent.session.id, gathered.files.map((file) => file.path), surfaceIndex)
+
       const glossary = loadGlossary(cwd).terms
       return {
         supported: true,
@@ -227,16 +283,20 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         file_count: gathered.files.length,
         truncated: gathered.truncated,
         candidates,
+        surface_hints: surfaceHints,
         glossary,
         guidance: [
           '用 read 工具阅读候选的 file:line 片段核实断言；snippet 已附在候选上。',
+          '每条 finding 必须给 surface（人话页面名，如"管理员页面"）：优先用 surface_hints 里的路由标题 / h1 / 导航文案，'
+            + '都没有就据组件名与页面内容拟一个中文名称；拟不出时用路由路径，绝不能用文件路径——文件路径对人没有意义。',
+          HUMAN_COPY_RULE,
           '按当前 persona 判定每条候选是否成立；AST 覆盖不到的语义问题（R-01 文案质量、R-03 是否真不可逆、R-02 同义判定）由你阅读代码后补充。',
           'R-09 候选已由 AST 求证（verified_by=ast），无需再核实颜色本身，直接采用。',
           '每条 finding 必须带 locator（file 必填，尽量带 symbol）；指不到位置的候选直接丢弃。',
           '每条 finding 还要写人话层：scene（在哪儿，如"管理员页面 · 用户列表"）、summary（发生了什么，一句话，不含文件名/规则 ID/代码术语）、'
             + 'consequence（对用户的后果）——卡片第一屏只给人看这三项，读者是产品/运营；rationale 与 suggestion 是折叠起来交给 AI 的技术细节。',
           '拿不准的候选宁可丢弃——"发现问题总数"不是目标，宁缺毋滥。',
-          '本轮无 P0/P1 问题时才执行 R-02 术语检查（条件触发），只对新增/变更术语做增量判断。',
+          '本轮无一级 / 二级问题时才执行 R-02 术语检查（条件触发），只对新增/变更术语做增量判断。',
           '多 persona 走查时：换 persona_id 重复本工具独立走查，最后统一调用一次 ux_report 合并定稿。',
           `可选范围建议：${suggestSourceRoots(cwd).join(', ') || '（未发现常规源码目录）'}`,
         ],

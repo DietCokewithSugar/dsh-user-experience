@@ -432,7 +432,7 @@ function walk(node: ts.Node, ctx: WalkContext): void {
           symbol: enclosingSymbol(ctx),
           line: lineOf(node, ctx.sourceFile),
           snippet: text,
-          note: '术语候选：是否与其他位置用词同义，由模型判定（条件触发规则，仅无 P0/P1 时执行）',
+          note: '术语候选：是否与其他位置用词同义，由模型判定（条件触发规则，仅无一级 / 二级问题时执行）',
           verified_by: 'model',
         })
       }

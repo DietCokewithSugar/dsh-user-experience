@@ -7,6 +7,7 @@
 
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import type { ConfiguredMode } from './mode'
 
 export interface Config {
   /** 单次扫描收集的最大源文件数。 */
@@ -19,6 +20,19 @@ export interface Config {
   maxFindings: number
   /** 扫描收集时额外跳过的目录名。 */
   excludePatterns: string[]
+  /**
+   * 默认运行模式；`detect` 表示按场景自动选择（CI / R7 触发走 auto，
+   * 用户主动发起走 review）。`.ux/rules.local.yml` 与 `--mode` 优先级更高。
+   */
+  mode: ConfiguredMode
+  /** 是否启用 R7 改动触发的自动走查（可在 .ux/rules.local.yml 中关闭）。 */
+  autoScan: boolean
+  /** 视为"文件编辑"的工具名：其成功结果会被计入改动集合。 */
+  autoScanEditTools: string[]
+  /** 单次自动走查最多纳入的改动文件数（超出则截断，避免范围失控）。 */
+  autoScanMaxFiles: number
+  /** 两次自动走查之间至少间隔的回合数。 */
+  autoScanDebounceTurns: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -30,6 +44,13 @@ export const Config: Schema<Config> = Schema.object({
     'node_modules', 'dist', 'build', 'out', 'coverage', '.git',
     'test', 'tests', '__tests__', 'spec', 'e2e', 'stories', 'mocks',
   ]),
+  mode: Schema.union([
+    Schema.const('detect'), Schema.const('auto'), Schema.const('review'), Schema.const('interactive'),
+  ]).default('detect'),
+  autoScan: Schema.boolean().default(true),
+  autoScanEditTools: Schema.array(String).default(['write', 'edit']),
+  autoScanMaxFiles: Schema.number().default(20),
+  autoScanDebounceTurns: Schema.number().default(1),
 })
 
 /** 工具共享的内部设置（validate 后的 config 直接即此类型）。 */

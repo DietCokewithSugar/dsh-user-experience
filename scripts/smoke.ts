@@ -7,22 +7,42 @@
  * glossary 增量合并、技术栈探测、严重度矩阵、插件 apply 注册接线。
  */
 
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ts from 'typescript'
 import { extractCandidates } from '../src/ast'
+import { buildAutoScanPrompt, isReviewableChange, relativizeChange, scanUnitsOf } from '../src/auto-scan'
 import { extractVueCandidates } from '../src/vue'
+import { featureDigestOf, fingerprintOf, isSameFinding, symbolPathOf } from '../src/fingerprint'
 import { mergeGlossary, loadGlossary } from '../src/glossary'
+import { comparableOf, HISTORY_FILE, metricsOf, recordScan, reconcile } from '../src/history'
+import { codeSpeakReason } from '../src/human-copy'
+import { loadLocalRules } from '../src/local-rules'
+import { extractModeFlag, modeInstruction, resolveMode } from '../src/mode'
 import { writePersonas, loadPersonas } from '../src/persona'
 import { detectStack, gatherFiles } from '../src/project'
-import { levelOf, reachOf } from '../src/types'
 import {
-  categoryWording, handoffBundle, handoffText, ruleWording,
-  sceneFallback, severityWording, summaryFallback,
-} from '../src/human'
+  collectSurfaceHints, createSurfaceIndex, looksLikeFilePath, sanitizeSurface, surfaceCandidatesFor,
+} from '../src/surface'
+import { levelOf, reachOf, severityLabel } from '../src/types'
+import type { UxFinding } from '../src/types'
 import { apply, inject } from '../src/index'
 import { RULES } from '../src/rules'
+
+/** 测试用的完整插件配置（schema 默认值的等价物）。 */
+const TEST_CONFIG = {
+  maxScanFiles: 300,
+  maxCandidatesPerRule: 5,
+  maxCandidatesPerFile: 25,
+  maxFindings: 30,
+  excludePatterns: [],
+  mode: 'detect' as const,
+  autoScan: true,
+  autoScanEditTools: ['write', 'edit'],
+  autoScanMaxFiles: 20,
+  autoScanDebounceTurns: 1,
+}
 
 let failures = 0
 function check(label: string, actual: boolean, detail = ''): void {
@@ -310,23 +330,241 @@ function confirmRemove() {
   const commands: unknown[] = []
   const sections: unknown[] = []
   const tools: unknown[] = []
+  const listeners: string[] = []
   const stubCtx = {
     commands: { register: (def: unknown) => commands.push(def) },
     systemPrompt: { section: (sec: unknown) => sections.push(sec) },
     tools: { register: (tool: unknown) => tools.push(tool) },
+    on: (event: string) => { listeners.push(event) },
   }
-  apply(stubCtx as never, {
-    maxScanFiles: 300, maxCandidatesPerRule: 5, maxCandidatesPerFile: 25,
-    maxFindings: 30, excludePatterns: [],
-  })
+  apply(stubCtx as never, TEST_CONFIG)
   check('注册 /ux 命令', commands.length === 1)
   check('注册 ux:personas 提示词段', sections.length === 1)
-  check('注册 3 个模型工具', tools.length === 3)
-  check('工具名 = ux_scan / ux_report / ux_personas_write', tools.every((t) => {
+  check('注册 4 个模型工具', tools.length === 4)
+  check('工具名 = ux_scan / ux_report / ux_judge / ux_personas_write', tools.every((t) => {
     const name = (t as { name?: string }).name
-    return name === 'ux_scan' || name === 'ux_report' || name === 'ux_personas_write'
+    return name === 'ux_scan' || name === 'ux_report' || name === 'ux_judge' || name === 'ux_personas_write'
   }))
+  check('R7 监听 tools/result 与 agent/turn-stopping',
+    listeners.includes('tools/result') && listeners.includes('agent/turn-stopping'),
+    listeners.join(','))
+  check('/ux 的 hint 不含报告 ID / findingID 参数格式', (() => {
+    const definition = commands[0] as { input?: { hint?: string }; description?: string }
+    const text = `${definition.input?.hint ?? ''} ${definition.description ?? ''}`
+    return !text.includes('报告ID') && !text.includes('findingID') && !text.includes('judge')
+  })())
   check('依赖注入声明 = tools/commands/systemPrompt', inject.join(',') === 'tools,commands,systemPrompt')
+
+  // ── 8. 运行模式与场景自动选择（v0.1.1 §4.2）──────────────────────────────────
+  console.log('运行模式')
+  check('显式 --mode 优先级最高', resolveMode({
+    explicit: 'interactive', localRules: { mode: 'auto' }, configured: 'review',
+    trigger: 'auto-scan', env: { CI: '1' },
+  }).mode === 'interactive')
+  check('rules.local.yml 次之', resolveMode({
+    localRules: { mode: 'interactive' }, configured: 'review', trigger: 'user', env: {},
+  }).mode === 'interactive')
+  check('插件配置再次之', resolveMode({ configured: 'auto', trigger: 'user', env: {} }).mode === 'auto')
+  check('CI 环境自动 auto', resolveMode({ configured: 'detect', trigger: 'user', env: { CI: 'true' } }).mode === 'auto')
+  check('CI=0 不算 CI', resolveMode({ configured: 'detect', trigger: 'user', env: { CI: '0' } }).mode === 'review')
+  check('R7 触发自动 auto', resolveMode({ configured: 'detect', trigger: 'auto-scan', env: {} }).mode === 'auto')
+  check('用户发起默认 review', resolveMode({ configured: 'detect', trigger: 'user', env: {} }).mode === 'review')
+  check('auto 模式提示词不索要确认、只在一级/二级问题时提示一句',
+    modeInstruction('auto').includes('不要向用户索要确认')
+    && modeInstruction('auto').includes('一级 / 二级问题')
+    && !modeInstruction('auto').includes('逐条与用户确认'),
+    modeInstruction('auto'))
+  check('review 模式提示词给批量确认而非逐条打断',
+    modeInstruction('review').includes('批量确认') && modeInstruction('review').includes('不要逐条打断'))
+  const flag = extractModeFlag('订单流程 --mode=auto')
+  check('--mode 解析并剥离', flag.mode === 'auto' && flag.rest === '订单流程', JSON.stringify(flag))
+  const spaced = extractModeFlag('--mode review 首页')
+  check('--mode <值> 空格形式也解析', spaced.mode === 'review' && spaced.rest === '首页', JSON.stringify(spaced))
+
+  // ── 9. 人话文案与 surface 净化（v0.1.1 §3.4 / §3.5）─────────────────────────
+  console.log('人话文案与 surface')
+  check('严重度人话标签', severityLabel('P0') === '一级问题' && severityLabel('P3') === '四级问题')
+  check('未知等级不回落成 P?', !severityLabel('P9').includes('P'))
+  check('代码腔：catch 分支描述被判定',
+    codeSpeakReason('handleDelete 的 catch 分支中没有调用 toast') !== undefined)
+  check('代码腔：缺少 empty state 分支被判定',
+    codeSpeakReason('缺少 empty state 分支') !== undefined)
+  check('代码腔：文件路径被判定',
+    codeSpeakReason('src/pages/Admin/UserTable.tsx 里没有处理失败') !== undefined)
+  check('人话描述不被误杀',
+    codeSpeakReason('删除失败时界面没有任何提示，用户以为删成功了') === undefined,
+    String(codeSpeakReason('删除失败时界面没有任何提示，用户以为删成功了')))
+  check('人话描述不被误杀（空态）',
+    codeSpeakReason('列表为空时页面一片空白，看不出是没数据还是加载失败') === undefined,
+    String(codeSpeakReason('列表为空时页面一片空白，看不出是没数据还是加载失败')))
+  check('surface 保留人话名', sanitizeSurface('管理员页面', { route: '/admin' }) === '管理员页面')
+  check('surface 文件路径退化到路由路径',
+    sanitizeSurface('src/pages/Admin/UserTable.tsx', { route: '/admin/users', symbol: 'UserTable' }) === '/admin/users')
+  check('无路由时退到组件名，仍不是文件路径',
+    sanitizeSurface('src/pages/Admin/UserTable.tsx', { symbol: 'UserTable' }) === 'UserTable')
+  check('缺省 surface 也不会是文件路径', !looksLikeFilePath(sanitizeSurface(undefined, {})))
+
+  // 路由标题 / h1 / 导航文案的提取优先级
+  const ROUTED = `
+import { UserTable } from './pages/Admin/UserTable'
+export const routes = [{ path: '/admin/users', meta: { title: '用户管理' }, component: UserTable }]
+`
+  const PAGE = `
+export function UserTable() {
+  return <div><h1>用户列表</h1></div>
+}
+`
+  const surfaceIndex = createSurfaceIndex()
+  collectSurfaceHints(surfaceIndex, 'src/routes.tsx', ROUTED)
+  collectSurfaceHints(surfaceIndex, 'src/pages/Admin/UserTable.tsx', PAGE)
+  const resolvedSurface = surfaceCandidatesFor(surfaceIndex, 'src/pages/Admin/UserTable.tsx')
+  check('路由标题优先于 h1', resolvedSurface.candidates[0] === '用户管理', JSON.stringify(resolvedSurface))
+  check('h1 作为次选', resolvedSurface.candidates.includes('用户列表'), JSON.stringify(resolvedSurface))
+  check('路由路径可作兜底', resolvedSurface.route === '/admin/users', JSON.stringify(resolvedSurface))
+
+  // ── 10. 指纹（v0.1.1 §6.2）──────────────────────────────────────────────────
+  console.log('跨走查指纹')
+  const partsA = {
+    rule: 'R-06',
+    symbolPath: symbolPathOf('src/pages/Admin/UserTable.tsx', 'UserTable', 'handleDelete'),
+    featureDigest: featureDigestOf('handleDelete 无 catch', 'fallback'),
+  }
+  const partsSameAfterEdit = { ...partsA }
+  check('指纹不含行号，加行不漂移', fingerprintOf(partsA) === fingerprintOf(partsSameAfterEdit))
+  check('特征原文空白差异不影响摘要',
+    featureDigestOf('handleDelete  无   catch', 'x') === featureDigestOf('handleDelete 无 catch', 'x'))
+  const renamed = { ...partsA, symbolPath: symbolPathOf('src/pages/Admin/UserTable.tsx', 'UserGrid', 'handleDelete') }
+  check('重命名后指纹变化', fingerprintOf(partsA) !== fingerprintOf(renamed))
+  check('三元组两项匹配 → 仍是同一问题（模糊匹配）', isSameFinding(partsA, renamed))
+  check('只有一项匹配 → 不是同一问题',
+    !isSameFinding(partsA, { rule: 'R-06', symbolPath: 'other::X', featureDigest: featureDigestOf('别的问题', 'y') }))
+
+  // ── 11. rules.local.yml 宽容解析（v0.1.1 §4.2 / §5）─────────────────────────
+  console.log('rules.local.yml')
+  const prefRoot = mkdtempSync(join(tmpdir(), 'dsh-ux-pref-'))
+  try {
+    check('文件不存在时返回空偏好', Object.keys(loadLocalRules(prefRoot)).length === 0)
+    mkdirSync(join(prefRoot, '.ux'), { recursive: true })
+    writeFileSync(join(prefRoot, '.ux', 'rules.local.yml'),
+      'mode: auto\nautoScan:\n  enabled: false\n  debounceTurns: 3\ndisabledRules: [R-02]\nfocus: 错误提示\n')
+    const prefs = loadLocalRules(prefRoot)
+    check('认识 mode', prefs.mode === 'auto')
+    check('认识 autoScan', prefs.autoScan?.enabled === false && prefs.autoScan.debounceTurns === 3)
+    check('未知键宽容忽略', !Object.keys(prefs).includes('disabledRules'), JSON.stringify(prefs))
+    writeFileSync(join(prefRoot, '.ux', 'rules.local.yml'), 'mode: 乱写\n:::不是 yaml\n')
+    check('坏文件不抛错，退回默认', loadLocalRules(prefRoot).mode === undefined)
+  } finally {
+    rmSync(prefRoot, { recursive: true, force: true })
+  }
+
+  // ── 12. 历史账本与隐式确认（v0.1.1 §6.3 的三种消失情形）─────────────────────
+  console.log('隐式确认')
+  const ledgerRoot = mkdtempSync(join(tmpdir(), 'dsh-ux-history-'))
+  try {
+    mkdirSync(join(ledgerRoot, 'src', 'pages'), { recursive: true })
+    writeFileSync(join(ledgerRoot, 'src', 'pages', 'Fixed.tsx'), 'export const Fixed = () => null\n')
+    writeFileSync(join(ledgerRoot, 'src', 'pages', 'NotScanned.tsx'), 'export const NotScanned = () => null\n')
+    writeFileSync(join(ledgerRoot, 'src', 'pages', 'Deleted.tsx'), 'export const Deleted = () => null\n')
+
+    const makeFinding = (id: string, file: string, rule: string): UxFinding => ({
+      id,
+      fingerprint: fingerprintOf({ rule, symbolPath: `${file}::C`, featureDigest: featureDigestOf(id, id) }),
+      surface: '某页面',
+      human: { headline: '出事了', description: '用户会遇到问题', severity_label: '一级问题' },
+      technical: {
+        locator: { file, symbol: 'C' },
+        rule,
+        category: 'state-coverage',
+        verified_by: 'model',
+        evidence_level: 'static',
+        persona_refs: ['investor'],
+        severity: { impact: 'high', impact_confidence: 'medium', reach: 'wide', level: 'P0' },
+        rationale: '依据',
+        suggestion: '建议',
+      },
+      status: 'pending',
+    })
+    const first = [
+      makeFinding('UX-0001', 'src/pages/Fixed.tsx', 'R-06'),
+      makeFinding('UX-0002', 'src/pages/NotScanned.tsx', 'R-05'),
+      makeFinding('UX-0003', 'src/pages/Deleted.tsx', 'R-04'),
+    ]
+    recordScan(ledgerRoot, {
+      reportId: 'rpt-1',
+      scope: ['src/pages/Fixed.tsx', 'src/pages/NotScanned.tsx', 'src/pages/Deleted.tsx'],
+      findings: first,
+      featureDigests: new Map(first.map((f) => [f.id, featureDigestOf(f.id, f.id)])),
+    })
+    check('账本文件写出（.ux/history.jsonl）', existsSync(join(ledgerRoot, HISTORY_FILE)))
+
+    // 第二轮：Fixed 被改掉且重新扫描；NotScanned 不在 scope；Deleted 的文件已被删除。
+    rmSync(join(ledgerRoot, 'src', 'pages', 'Deleted.tsx'))
+    const verdicts = reconcile(ledgerRoot, {
+      scopeFiles: ['src/pages/Fixed.tsx', 'src/pages/Deleted.tsx'],
+      current: [],
+    })
+    const byFile = new Map(verdicts.map((v) => [v.entry.file, v]))
+    check('改掉且被重新扫描 → confirmed_implicit',
+      byFile.get('src/pages/Fixed.tsx')?.status === 'confirmed_implicit', JSON.stringify(verdicts))
+    check('位置未被扫描 → stale(scope-miss)',
+      byFile.get('src/pages/NotScanned.tsx')?.status === 'stale'
+      && byFile.get('src/pages/NotScanned.tsx')?.reason === 'scope-miss', JSON.stringify(verdicts))
+    check('代码整块删除 → stale(removed)，不算改进',
+      byFile.get('src/pages/Deleted.tsx')?.status === 'stale'
+      && byFile.get('src/pages/Deleted.tsx')?.reason === 'removed', JSON.stringify(verdicts))
+    check('隐式判定回写指向原报告与原 finding',
+      byFile.get('src/pages/Fixed.tsx')?.entry.report_id === 'rpt-1'
+      && byFile.get('src/pages/Fixed.tsx')?.entry.finding_id === 'UX-0001')
+
+    const metrics = metricsOf(ledgerRoot)
+    check('指标：确认 1 条', metrics.confirmed === 1, JSON.stringify(metrics))
+    check('指标：stale 不计入分母', metrics.stale === 2 && metrics.effectiveRatio === 1, JSON.stringify(metrics))
+
+    // 问题仍然存在时不该被判为已改进。
+    const persisting = [makeFinding('UX-0007', 'src/pages/Fixed.tsx', 'R-07')]
+    recordScan(ledgerRoot, {
+      reportId: 'rpt-2',
+      scope: ['src/pages/Fixed.tsx'],
+      findings: persisting,
+      featureDigests: new Map([['UX-0007', featureDigestOf('UX-0007', 'UX-0007')]]),
+    })
+    const second = reconcile(ledgerRoot, {
+      scopeFiles: ['src/pages/Fixed.tsx'],
+      current: [comparableOf(persisting[0] as UxFinding, featureDigestOf('UX-0007', 'UX-0007'))],
+    })
+    check('问题仍在时不产生隐式确认',
+      !second.some((v) => v.entry.finding_id === 'UX-0007'), JSON.stringify(second))
+    check('状态没变化时不重复落账', second.length === 0, JSON.stringify(second))
+
+    // stale 不是终态：位置被重新扫描后仍可判定为已改进。
+    const third = reconcile(ledgerRoot, { scopeFiles: ['src/pages/NotScanned.tsx'], current: [] })
+    check('stale 条目在位置被重新扫描后转为 confirmed_implicit',
+      third.some((v) => v.entry.file === 'src/pages/NotScanned.tsx' && v.status === 'confirmed_implicit'),
+      JSON.stringify(third))
+  } finally {
+    rmSync(ledgerRoot, { recursive: true, force: true })
+  }
+
+  // ── 13. R7 改动过滤与扫描单元（v0.1.1 §5）───────────────────────────────────
+  console.log('R7 改动过滤')
+  check('前端组件改动纳入', isReviewableChange('src/pages/Admin/UserTable.tsx'))
+  check('Vue SFC 改动纳入', isReviewableChange('src/components/List.vue'))
+  check('纯后端改动排除', !isReviewableChange('server/api/orders.ts'))
+  check('测试文件排除', !isReviewableChange('src/pages/UserTable.test.tsx'))
+  check('配置文件排除', !isReviewableChange('vite.config.ts'))
+  check('样式文件排除（本版规则不覆盖）', !isReviewableChange('src/styles/main.css'))
+  check('绝对路径归一为相对路径',
+    relativizeChange('/repo/src/a.tsx', '/repo') === 'src/a.tsx')
+  check('项目外路径被拒', relativizeChange('/other/a.tsx', '/repo') === undefined)
+  check('扫描单元取所属目录，不是单个文件',
+    JSON.stringify(scanUnitsOf(['src/pages/Admin/UserTable.tsx', 'src/pages/Admin/Detail.tsx']))
+      === JSON.stringify(['src/pages/Admin']))
+  const autoPrompt = buildAutoScanPrompt(['src/pages/Admin'], ['src/pages/Admin/UserTable.tsx'])
+  check('R7 提示词强制 auto 且不索要确认',
+    autoPrompt.includes('"auto"') && autoPrompt.includes('不要向用户提问'))
+  check('R7 提示词说明扫完整组件而非 diff',
+    autoPrompt.includes('完整组件 / 页面') && autoPrompt.includes('diff'))
+  check('R7 提示词只在一级/二级问题时提示', autoPrompt.includes('一级 / 二级问题'))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
