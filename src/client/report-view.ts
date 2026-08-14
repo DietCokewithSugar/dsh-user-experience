@@ -16,8 +16,9 @@
  * ```
  *
  * 文件路径、规则 ID、P0~P3 都在折叠区里——它们是给 AI 看的，展开后可一键
- * 复制成结构化 YAML 直接粘给模型。review 模式下卡片底部还有批量确认条：
- * 勾选多条一并提交，用户不需要知道任何 ID。
+ * 复制成结构化 YAML。用户确认问题成立后，卡片还会提供一份现象导向的任务
+ * Prompt：要求编码 AI 先补齐完整项目上下文，不预设具体代码改法。review 模式下
+ * 卡片底部还有批量确认条：勾选多条一并提交，用户不需要知道任何 ID。
  *
  * 纯 React.createElement（无 JSX）；样式内联，不触碰全局主题与 DOM。
  */
@@ -176,8 +177,10 @@ function FindingRow({
 }: FindingRowProps): ReturnType<typeof createElement> {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'ok' | 'fail'>('idle')
+  const [promptCopied, setPromptCopied] = useState<'idle' | 'ok' | 'fail'>('idle')
   const levelStyle = LEVEL_STYLE[finding.level] ?? {}
   const pending = finding.status === 'pending'
+  const confirmedByUser = finding.status === 'confirmed_explicit'
 
   return createElement('div', { style: FINDING },
     createElement('div', { style: HEAD },
@@ -217,6 +220,17 @@ function FindingRow({
           disabled: busy,
           onClick: () => onJudge([finding.id], 'rejected'),
         }, '不是问题')
+        : null,
+      confirmedByUser
+        ? createElement('button', {
+          type: 'button',
+          style: CONFIRM_BUTTON,
+          onClick: () => {
+            void copyText(finding.deliveryPrompt).then((ok) => setPromptCopied(ok ? 'ok' : 'fail'))
+          },
+        }, promptCopied === 'ok' ? '已复制，可交给 AI'
+          : promptCopied === 'fail' ? '复制失败，请重试'
+            : '复制给 AI 的任务 Prompt')
         : null,
       createElement('button', {
         type: 'button',

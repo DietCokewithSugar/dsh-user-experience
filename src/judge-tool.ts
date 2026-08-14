@@ -234,6 +234,9 @@ export function uxJudgeTool(): ToolDefinition {
       } else {
         lines.push(`已记录 ${outcome.applied.length} 条为「${label}」：`)
         for (const item of outcome.applied) lines.push(`- ${item.surface}｜${item.headline}`)
+        if (verdict === 'confirmed_explicit') {
+          lines.push('报告卡片现已提供「复制给 AI 的任务 Prompt」：它只描述观察到的现象，并提醒 AI 先补齐完整项目上下文。')
+        }
         if (outcome.unresolved.length > 0) {
           lines.push(`没匹配上的说法：${outcome.unresolved.join('、')}`)
         }

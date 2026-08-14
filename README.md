@@ -2,15 +2,39 @@
 
 # dsh-user-experience
 
-> A UX walkthrough plugin for DeepSeek Harness (DSH): **finds potential UX issues in your project — automatically walks through React (TypeScript / JavaScript) and Vue 3 source code, pinpoints problems, and suggests fixes.**
+> A UX walkthrough plugin for DeepSeek Harness (DSH): **AI simulates target users to uncover UX problems during development—before they reach production—and provides concrete optimization suggestions.**
 >
 > Scope: React + TypeScript / React + JavaScript / Vue 3 supported, static evidence only, no visual issues.
 
 Existing automated checks (axe, Lighthouse) can only verify absolute rules — contrast ratio, missing alt text. But UX issues are inherently **relative**: a confirmation dialog before deleting protects an occasional user but wastes the time of an operator who processes hundreds of records a day. Without knowing *who it's for*, a "UX issue" cannot be defined.
 
-This plugin makes **target user personas** a prerequisite for the walkthrough: every finding is anchored to an explicit persona, and no persona means no conclusions. The walkthrough produces actionable, locatable, reviewable UX hints **during development** — not post-launch user feedback.
+This plugin makes **target user personas** a prerequisite for the walkthrough: every finding is anchored to an explicit persona, and no persona means no conclusions. By having AI walk through the product as those users, it surfaces experience problems **during development** and gives concrete, locatable, reviewable optimization suggestions—not post-launch user feedback.
 
 **It is a pipeline, not a CLI.** Edit a front-end file and the walkthrough runs itself — no command to remember, no step-by-step approvals. The report card leads with plain language (which page, what happened, how bad), and folds file paths and rule IDs into a "technical details" block you can copy straight to an AI in one click. Verdicts need no IDs either: click a button, or just say "the second one isn't a problem" or "ignore everything below level three".
+
+## Install in Harness
+
+In DeepSeek Harness, enter:
+
+> Install the UX plugin in DeepSeek Harness: `dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience`
+
+Or run the command directly:
+
+```sh
+dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
+```
+
+Restart DSH or reload the `web` profile after installation. GitHub plugins execute build scripts during installation; read the [security note](#installation) before installing, and pin a trusted commit for production use.
+
+## After installation
+
+The walkthrough report explains the observed behavior and user impact in plain language:
+
+![UX report card shown in Harness after installation](docs/images/ux-report-card.png)
+
+Once you confirm that a finding is real, the card provides a task Prompt you can copy to another AI. It describes the observed phenomenon rather than prescribing code changes, tells the AI to inspect the complete project context, and explicitly allows copy changes:
+
+![Confirmed UX finding with a copy-to-AI Prompt action](docs/images/ux-confirmed-prompt.png)
 
 ---
 
@@ -25,7 +49,7 @@ This plugin makes **target user personas** a prerequisite for the walkthrough: e
 **Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md) for the stack-extension details and [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md) for the form revision.
 
 - Evidence level is fixed at **static** (source-code evidence); **no visual issues**: contrast, hit-target size, text truncation, focus order
-- No auto-fix, no code changes: suggestions only ("a nudge for the developer to look", not a verdict)
+- No automatic code changes: the plugin gives optimization suggestions; after you confirm a finding, it generates an observation-led task Prompt for a coding AI
 - Input is source code only; website input (v0.3) and design-mockup input (v0.4) are reserved roadmap items
 
 ## Features
@@ -38,6 +62,7 @@ This plugin makes **target user personas** a prerequisite for the walkthrough: e
 | **Change-triggered walkthrough** | automatic | After you edit a front-end file, the turn wraps up by walking **the whole component / page that file belongs to** — not the changed lines (missing-state issues do not exist in a diff). Reports quietly; speaks up only for level-one / level-two issues |
 | Report card | automatic | The first screen is plain language only: `[Level one] Admin page` + one sentence on what happened + what the user runs into. File paths, rule IDs and internal numbering live behind "technical details", which expands to structured YAML you can copy to an AI in one click |
 | Finding confirmation loop | card buttons / plain speech | Click Confirmed / Not an issue, or just say "the second one isn't a problem", "those are all right", "ignore everything below level three" — **no ID is ever needed**; verdicts go to the session log and fully restore on replay |
+| AI task Prompt after confirmation | card button | Once a user confirms a finding, copy a ready-to-use Prompt that describes the observed behavior, affected scenario, user impact, and acceptance goal. It does **not** prescribe code changes, warns that the plugin saw only part of the codebase, and allows UI copy edits |
 | Implicit confirmation | automatic | If a finding disappears in a later walkthrough **and that location was actually re-scanned**, the user fixed it — so the finding was real. Nobody clicks anything, and the signal is harder than a button press |
 | Report output | automatic | Markdown sorted by severity (**level one–four on screen; P0–P3 demoted to internal identifiers**), common issues (hit by ≥2 personas) first |
 | Glossary | automatic | R-02 term verdicts persist incrementally to `.ux/glossary.yml`; later rounds only compare deltas |
@@ -159,6 +184,8 @@ those are all right
 ignore everything below level three
 the delete one — I confirm it
 ```
+
+After confirming a finding, click **Copy task Prompt for AI** on that card and paste it into your coding agent. The Prompt deliberately describes what users experience without guessing at the implementation from partial source context.
 
 After editing front-end code you need do nothing at all: the walkthrough runs as the turn wraps up, reports quietly, and speaks up only for level-one / level-two issues.
 

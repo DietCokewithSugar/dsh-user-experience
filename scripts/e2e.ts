@@ -9,6 +9,8 @@
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createElement, type ComponentType } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { apply } from '../src/index'
 import { writePersonas } from '../src/persona'
@@ -17,8 +19,9 @@ import { registerAutoScan } from '../src/auto-scan'
 import { HISTORY_FILE } from '../src/history'
 import { currentReport, resolveSelector } from '../src/judge-tool'
 import { uxReportDefinition, normalizeFinding } from '../src/client/index'
+import { UxReportNodeView } from '../src/client/report-view'
 import type { CommandInvocation } from '@deepseek-ai/dsh-commands'
-import type { UxFinding } from '../src/types'
+import { deliveryPrompt, type UxFinding } from '../src/types'
 
 let failures = 0
 function check(label: string, actual: boolean, detail = ''): void {
@@ -246,6 +249,14 @@ async function remove(id: string) {
     f.surface.length > 0 && f.human.headline.length > 0 && f.human.description.length > 0))
   check('每条 finding 都有指纹', reportFindings.every((f) => f.fingerprint.length === 16))
   check('初始状态全部 pending', reportFindings.every((f) => f.status === 'pending'))
+  const handoffPrompt = deliveryPrompt(r09 as UxFinding)
+  check('交付 Prompt 以现象和用户影响为核心',
+    handoffPrompt.includes('观察到的现象：深色模式下订单页看不清')
+    && handoffPrompt.includes('用户实际遇到的情况：手机开了深色模式后'))
+  check('交付 Prompt 不泄漏局部代码推断出的具体改法',
+    !handoffPrompt.includes('主题变量') && !handoffPrompt.includes('dark: 变体'), handoffPrompt)
+  check('交付 Prompt 声明局部上下文边界并允许修改文案',
+    handoffPrompt.includes('部分代码') && handoffPrompt.includes('可以直接修改文案'), handoffPrompt)
   check('报告含共性问题小节', String(reportResult.markdown).includes('共性问题'))
   check('报告首屏用人话严重度而非 P0~P3', (() => {
     const markdown = String(reportResult.markdown)
@@ -279,6 +290,7 @@ async function remove(id: string) {
 
   const keywordResult = await run('ux_judge', { targets: ['深色'], verdict: 'confirmed' })
   check('关键词命中对应问题', (keywordResult.applied as Array<{ headline: string }>)[0]?.headline.includes('深色'), JSON.stringify(keywordResult.applied))
+  check('确认后提示可复制交付 Prompt', String(keywordResult.summary).includes('复制给 AI 的任务 Prompt'))
   check('显式确认写入 confirmed_explicit', session.events.some((event) =>
     event.type === 'ux/finding-status' && event.data.status === 'confirmed_explicit'))
   // 批量选择器：只验证解析，不消耗待判定条目（后面的隐式确认要用）。
@@ -466,7 +478,14 @@ async function remove(id: string) {
     )
     const viewData = (viewNode?.data ?? {}) as {
       mode: string
-      findings: Array<{ status: string; surface: string; headline: string; description: string; technicalYaml: string }>
+      findings: Array<{
+        status: string
+        surface: string
+        headline: string
+        description: string
+        technicalYaml: string
+        deliveryPrompt: string
+      }>
     }
     check('buildViewNode 输出渲染数据（含判定状态）', viewData.findings.some((f) => f.status !== 'pending'))
     check('节点 kind 为 ux-report', (viewNode as { kind?: string })?.kind === 'ux-report')
@@ -476,6 +495,29 @@ async function remove(id: string) {
     }), JSON.stringify(viewData.findings.map((f) => `${f.surface}|${f.headline}`)))
     check('技术细节可整块复制（结构化 YAML）', viewData.findings.every((f) =>
       f.technicalYaml.includes('locator:') && f.technicalYaml.includes('rule:') && f.technicalYaml.includes('severity:')))
+    check('卡片携带确认后可复制的现象导向 Prompt', viewData.findings.every((f) =>
+      f.deliveryPrompt.includes('观察到的现象：')
+      && f.deliveryPrompt.includes('不代表完整项目上下文')
+      && !f.deliveryPrompt.includes('suggestion:')))
+    const renderCard = (status: string): string => renderToStaticMarkup(createElement(
+      UxReportNodeView as ComponentType<Record<string, unknown>>,
+      {
+        node: {
+          data: {
+            ...viewData,
+            findings: viewData.findings.map((finding, index) =>
+              index === 0 ? { ...finding, status } : finding),
+          },
+        },
+        judge: async () => null,
+      },
+    ))
+    check('未确认的问题不显示 AI 任务 Prompt 按钮',
+      !renderCard('pending').includes('复制给 AI 的任务 Prompt'))
+    check('用户显式确认后显示 AI 任务 Prompt 按钮',
+      renderCard('confirmed_explicit').includes('复制给 AI 的任务 Prompt'))
+    check('隐式确认代表已经改掉，不再显示修复 Prompt 按钮',
+      !renderCard('confirmed_implicit').includes('复制给 AI 的任务 Prompt'))
     check('卡片带模式，review 才渲染批量条', viewData.mode === 'review')
   } else {
     check('存在 start/update 事件配对', false, JSON.stringify(reportEvents.map((e) => e.type)))
