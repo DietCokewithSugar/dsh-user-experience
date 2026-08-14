@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "useDefineForClassFields": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "lib/types",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

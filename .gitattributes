@@ -1,0 +1,4 @@
+# 统一换行符为 LF（跨平台开发 + CI）。
+* text=auto eol=lf
+*.png binary
+*.jpg binary

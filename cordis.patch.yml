@@ -1,0 +1,16 @@
+# dsh-user-experience bundle patch: one dual-face package contributes a
+# Host-side plugin row (commands, system-prompt section, model tools) and —
+# through the package.json `dsh.client` declaration — the browser client
+# plugin (the ux-report conversation node). The modules node half discovers
+# the client bundle from this same row, so no second row is needed.
+#
+# 配置项（均可用 id `ux-experience` 在 profile 的 cordis.patch.yml 或
+# --patch 层覆盖）：
+#   maxScanFiles          单次扫描收集的最大文件数（默认 300）
+#   maxCandidatesPerRule  每条规则每文件的最大候选数（默认 5）
+#   maxFindings           单份报告允许的最大 finding 数（默认 30）
+#   excludePatterns       扫描时跳过的目录名（默认 node_modules/dist/build/…）
+
+- insert:
+    - id: ux-experience
+      name: dsh-user-experience
