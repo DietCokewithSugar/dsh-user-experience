@@ -591,6 +591,55 @@ async function remove(id: string) {
   check('旧事件归一为三段式', legacy.human.headline === '旧依据' && legacy.technical.rule === 'R-06')
   check('旧事件的 surface 不退化为文件路径', !legacy.surface.includes('.tsx'), legacy.surface)
   check('旧状态映射到五态', legacy.status === 'confirmed_explicit')
+
+  // ── 9. 真实证据引用满足门槛后，rendered / interactive finding 可以定稿 ─────
+  console.log('多证据定稿')
+  const evidenceReport = await run('ux_report', {
+    title: '订单页视觉与流程复核',
+    language: 'zh-CN',
+    product_type: 'ecommerce',
+    persona_ids: ['investor'],
+    mode: 'review',
+    scope_paths: ['src/pages/Order.tsx', 'src/pages/order.css'],
+    findings: [{
+      rule: 'R-12',
+      persona_refs: ['investor'],
+      impact: 'low',
+      verified_by: 'model+browser',
+      evidence_level: 'rendered',
+      evidence_refs: ['screenshot: /orders at 390x844; emoji competes with the primary action'],
+      file: 'src/pages/order.css',
+      surface: '订单页',
+      headline: '装饰符号抢占了主要操作的注意力',
+      description: '进入订单页后，醒目的装饰符号比主要操作更先吸引注意，用户需要额外寻找下一步入口。',
+      rationale: '移动端截图中装饰符号的视觉权重高于主要按钮',
+      suggestion: '统一装饰元素与产品图标体系',
+    }, {
+      rule: 'R-14',
+      persona_refs: ['investor'],
+      impact: 'low',
+      verified_by: 'model+browser',
+      evidence_level: 'interactive',
+      evidence_refs: ['task steps: orders → select → confirm → second confirm → result; repeated confirmation observed'],
+      file: 'src/pages/Order.tsx',
+      surface: '订单页',
+      headline: '完成单次操作需要连续确认两次',
+      description: '用户已经确认过操作对象后还会再次看到含义相同的确认步骤，完成任务需要重复判断。',
+      rationale: '按个人投资者画像完成任务时记录到两个连续且含义相同的确认步骤',
+      suggestion: '检查两次确认是否都承担必要的风险告知',
+    }],
+  })
+  const evidenceFindings = evidenceReport.findings as UxFinding[]
+  check('带截图引用的 R-12 可以作为 rendered finding 定稿',
+    evidenceFindings.some((finding) =>
+      finding.technical.rule === 'R-12'
+      && finding.technical.evidence_level === 'rendered'
+      && finding.technical.evidence_refs.length === 1))
+  check('带 Persona 任务步骤的 R-14 可以作为 interactive finding 定稿',
+    evidenceFindings.some((finding) =>
+      finding.technical.rule === 'R-14'
+      && finding.technical.evidence_level === 'interactive'
+      && finding.technical.evidence_refs.length === 1))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
