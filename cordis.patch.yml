@@ -18,6 +18,7 @@
 #   autoScanEditTools      视为"文件编辑"的工具名（默认 ['write', 'edit']）
 #   autoScanMaxFiles       单次自动走查最多纳入的改动文件数（默认 20）
 #   autoScanDebounceTurns  两次自动走查之间的最小回合间隔（默认 1）
+#   outputLanguage         输出语言 auto|zh-CN|en（默认 auto）
 #
 # 用户的个人偏好（`.ux/rules.local.yml` 的 mode / autoScan）优先级高于本层。
 

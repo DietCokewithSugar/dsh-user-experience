@@ -120,12 +120,71 @@ const STATUS_BADGE: Record<string, CSSProperties> = {
   stale: { color: 'rgba(128, 128, 128, 0.9)', fontWeight: 600, fontSize: 12 },
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  confirmed_explicit: '✓ 已确认存在',
-  confirmed_implicit: '✓ 已改掉（下次走查中消失）',
-  rejected: '✗ 不是问题',
-  stale: '— 本次未覆盖，无法判定',
+const COPY = {
+  'zh-CN': {
+    confirmed: '确认存在',
+    rejected: '不是问题',
+    status: {
+      confirmed_explicit: '✓ 已确认存在',
+      confirmed_implicit: '✓ 已改掉（下次走查中消失）',
+      rejected: '✗ 不是问题',
+      stale: '— 本次未覆盖，无法判定',
+    } as Record<string, string>,
+    select: '选择',
+    prompt: '复制给 AI 的任务 Prompt',
+    promptCopied: '已复制，可交给 AI',
+    copyFailed: '复制失败，请重试',
+    detailsOpen: '▾ 技术细节',
+    detailsClosed: '▸ 技术细节',
+    techCopied: '已复制，可直接粘给 AI',
+    manualCopy: '复制失败，请手动选中上方文本',
+    copyTech: '复制技术细节',
+    report: 'UX 走查',
+    allJudged: '已全部判定',
+    total: '共',
+    pending: '条待你判断',
+    judged: '已判定',
+    selected: '已选',
+    selectMany: '勾选多条可一并提交',
+    confirmSelected: '确认选中',
+    rejectSelected: '选中的不是问题',
+    ignoreMinor: '三级以下全部忽略',
+    submitFailed: '判定提交失败',
+    footer: '也可以直接描述要确认或排除的问题，不需要填写内部编号。',
+  },
+  en: {
+    confirmed: 'Confirm',
+    rejected: 'Not an issue',
+    status: {
+      confirmed_explicit: '✓ Confirmed',
+      confirmed_implicit: '✓ Improved (gone after re-scan)',
+      rejected: '✗ Not an issue',
+      stale: '— Not covered by this scan',
+    } as Record<string, string>,
+    select: 'Select',
+    prompt: 'Copy task Prompt for AI',
+    promptCopied: 'Copied for AI',
+    copyFailed: 'Copy failed; try again',
+    detailsOpen: '▾ Technical details',
+    detailsClosed: '▸ Technical details',
+    techCopied: 'Copied for AI',
+    manualCopy: 'Copy failed; select the text above',
+    copyTech: 'Copy technical details',
+    report: 'UX walkthrough',
+    allJudged: 'all reviewed',
+    total: 'Total',
+    pending: 'awaiting review',
+    judged: 'reviewed',
+    selected: 'Selected',
+    selectMany: 'Select findings to submit together',
+    confirmSelected: 'Confirm selected',
+    rejectSelected: 'Reject selected',
+    ignoreMinor: 'Ignore level three/four',
+    submitFailed: 'Could not save verdict',
+    footer: 'You can also describe which findings to confirm or reject; no internal IDs are required.',
+  },
 }
+type CardCopy = (typeof COPY)[keyof typeof COPY]
 
 const BULK: CSSProperties = {
   borderTop: '1px solid rgba(128, 128, 128, 0.22)',
@@ -168,12 +227,13 @@ interface FindingRowProps {
   busy: boolean
   selectable: boolean
   selected: boolean
+  copy: CardCopy
   onToggle: (id: string) => void
   onJudge: (findingIds: readonly string[], verdict: 'confirmed' | 'rejected') => void
 }
 
 function FindingRow({
-  finding, busy, selectable, selected, onToggle, onJudge,
+  finding, busy, selectable, selected, copy, onToggle, onJudge,
 }: FindingRowProps): ReturnType<typeof createElement> {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'ok' | 'fail'>('idle')
@@ -190,7 +250,7 @@ function FindingRow({
           checked: selected,
           disabled: busy,
           onChange: () => onToggle(finding.id),
-          'aria-label': `选择：${finding.headline}`,
+          'aria-label': `${copy.select}: ${finding.headline}`,
         })
         : null,
       createElement('span', { style: { ...BADGE, ...levelStyle } }, finding.severityLabel),
@@ -198,7 +258,7 @@ function FindingRow({
       pending
         ? null
         : createElement('span', { style: STATUS_BADGE[finding.status] ?? {} },
-          STATUS_TEXT[finding.status] ?? finding.status),
+          copy.status[finding.status] ?? finding.status),
     ),
     createElement('p', { style: HEADLINE }, finding.headline),
     finding.description.length === 0
@@ -211,7 +271,7 @@ function FindingRow({
           style: CONFIRM_BUTTON,
           disabled: busy,
           onClick: () => onJudge([finding.id], 'confirmed'),
-        }, '确认存在')
+        }, copy.confirmed)
         : null,
       pending
         ? createElement('button', {
@@ -219,7 +279,7 @@ function FindingRow({
           style: REJECT_BUTTON,
           disabled: busy,
           onClick: () => onJudge([finding.id], 'rejected'),
-        }, '不是问题')
+        }, copy.rejected)
         : null,
       confirmedByUser
         ? createElement('button', {
@@ -228,16 +288,16 @@ function FindingRow({
           onClick: () => {
             void copyText(finding.deliveryPrompt).then((ok) => setPromptCopied(ok ? 'ok' : 'fail'))
           },
-        }, promptCopied === 'ok' ? '已复制，可交给 AI'
-          : promptCopied === 'fail' ? '复制失败，请重试'
-            : '复制给 AI 的任务 Prompt')
+        }, promptCopied === 'ok' ? copy.promptCopied
+          : promptCopied === 'fail' ? copy.copyFailed
+            : copy.prompt)
         : null,
       createElement('button', {
         type: 'button',
         style: LINK_BUTTON,
         onClick: () => setExpanded(!expanded),
         'aria-expanded': expanded,
-      }, expanded ? '▾ 技术细节' : '▸ 技术细节'),
+      }, expanded ? copy.detailsOpen : copy.detailsClosed),
     ),
     expanded
       ? createElement('div', { style: TECHNICAL },
@@ -248,9 +308,9 @@ function FindingRow({
           onClick: () => {
             void copyText(finding.technicalYaml).then((ok) => setCopied(ok ? 'ok' : 'fail'))
           },
-        }, copied === 'ok' ? '已复制，可直接粘给 AI'
-          : copied === 'fail' ? '复制失败，请手动选中上方文本'
-            : '复制技术细节'),
+        }, copied === 'ok' ? copy.techCopied
+          : copied === 'fail' ? copy.manualCopy
+            : copy.copyTech),
       )
       : null,
   )
@@ -262,6 +322,7 @@ export function UxReportNodeView({ node, judge }: UxReportNodeViewProps): Return
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<readonly string[]>([])
   const data = node.data
+  const copy = data.language === 'en' ? COPY.en : COPY['zh-CN']
   const sorted = [...data.findings].sort((left, right) =>
     (SEVERITY_ORDER[left.level] ?? 9) - (SEVERITY_ORDER[right.level] ?? 9))
   const pendingFindings = sorted.filter((finding) => finding.status === 'pending')
@@ -294,36 +355,38 @@ export function UxReportNodeView({ node, judge }: UxReportNodeViewProps): Return
     finding.level === 'P2' || finding.level === 'P3').map((finding) => finding.id)
 
   return createElement('div', { style: CARD },
-    createElement('p', { style: TITLE }, `UX 走查：${data.title}`),
+    createElement('p', { style: TITLE }, `${copy.report}: ${data.title}`),
     createElement('p', { style: META },
       pendingFindings.length === 0
-        ? `共 ${data.findings.length} 条，已全部判定`
-        : `共 ${data.findings.length} 条，${pendingFindings.length} 条待你判断${judged > 0 ? `（已判定 ${judged} 条）` : ''}`),
+        ? `${copy.total} ${data.findings.length}, ${copy.allJudged}`
+        : `${copy.total} ${data.findings.length}, ${pendingFindings.length} ${copy.pending}`
+          + `${judged > 0 ? ` (${copy.judged} ${judged})` : ''}`),
     ...sorted.map((finding) => createElement(FindingRow, {
       key: finding.id,
       finding,
       busy,
       selectable,
       selected: selected.includes(finding.id),
+      copy,
       onToggle: toggle,
       onJudge: submit,
     })),
     selectable
       ? createElement('div', { style: BULK },
         createElement('span', { style: { fontSize: 12, color: 'rgba(128,128,128,0.9)' } },
-          selected.length === 0 ? '勾选多条可一并提交：' : `已选 ${selected.length} 条：`),
+          selected.length === 0 ? `${copy.selectMany}:` : `${copy.selected} ${selected.length}:`),
         createElement('button', {
           type: 'button',
           style: CONFIRM_BUTTON,
           disabled: busy || selected.length === 0,
           onClick: () => submit(selected, 'confirmed'),
-        }, '确认选中'),
+        }, copy.confirmSelected),
         createElement('button', {
           type: 'button',
           style: REJECT_BUTTON,
           disabled: busy || selected.length === 0,
           onClick: () => submit(selected, 'rejected'),
-        }, '选中的不是问题'),
+        }, copy.rejectSelected),
         minorPending.length === 0
           ? null
           : createElement('button', {
@@ -331,12 +394,11 @@ export function UxReportNodeView({ node, judge }: UxReportNodeViewProps): Return
             style: LINK_BUTTON,
             disabled: busy,
             onClick: () => submit(minorPending, 'rejected'),
-          }, `三级以下全部忽略（${minorPending.length}）`),
+          }, `${copy.ignoreMinor} (${minorPending.length})`),
       )
       : null,
-    error === null ? null : createElement('p', { style: ERROR }, `判定提交失败：${error}`),
+    error === null ? null : createElement('p', { style: ERROR }, `${copy.submitFailed}: ${error}`),
     createElement('p', { style: FOOTER },
-      '也可以直接说「第 2 条不成立」「这几条都对」——不用记编号。'
-      + '本版仅静态源码证据，不覆盖视觉类问题（对比度、热区尺寸、文字截断、焦点顺序）。'),
+      copy.footer),
   )
 }

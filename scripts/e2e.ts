@@ -44,6 +44,7 @@ const TEST_CONFIG = {
   autoScanEditTools: ['write', 'edit'],
   autoScanMaxFiles: 20,
   autoScanDebounceTurns: 1,
+  outputLanguage: 'auto' as const,
 }
 
 interface StubAgent {
@@ -77,6 +78,18 @@ export function OrderList() {
     </div>
   )
 }
+`)
+  writeFileSync(join(root, 'src', 'pages', 'order.css'), `
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  margin: 3px 5px 7px 9px;
+  row-gap: 11px;
+  column-gap: 13px;
+  padding-top: 15px;
+}
+.empty::before { content: "✨"; }
 `)
   writePersonas(root, [{
     id: 'investor', name: '个人投资者', scenario: '下班后查看持仓', goals: ['快速确认盈亏'],
@@ -121,11 +134,15 @@ export function OrderList() {
   console.log('ux_scan')
   const scanResult = await run('ux_scan', { paths: ['src'] })
   check('技术栈支持 React+TS', scanResult.supported === true, JSON.stringify(scanResult.stack))
-  check('收集到源文件', (scanResult.files as unknown[]).length === 2, JSON.stringify(scanResult.files))
+  check('收集到源码与 CSS 文件', (scanResult.files as unknown[]).length === 3, JSON.stringify(scanResult.files))
   check('R-09 快车道候选（text-black 无 dark:）', (scanResult.candidates as Array<{ rule: string; verified_by: string }>).some((c) => c.rule === 'R-09' && c.verified_by === 'ast'))
   check('R-06 候选（remove 的 fetch 无 catch）', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-06'))
   check('R-05 候选（loading 有、empty 无）', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-05'))
   check('R-04 候选（remove 无确认）', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-04'))
+  check('R-10 CSS/布局候选', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-10'))
+  check('R-12 CSS Emoji 候选', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-12'))
+  check('产品类型和对应走查重点进入扫描结果',
+    scanResult.product_type === 'other' && (scanResult.review_focus as unknown[]).length > 0)
   const hints = scanResult.surface_hints as Array<{ file: string; route?: string; routeTitle?: string; heading?: string }>
   const orderHint = hints.find((hint) => hint.file === 'src/pages/Order.tsx')
   check('surface 素材含路由标题与 h1',
@@ -181,6 +198,8 @@ async function remove(id: string) {
   console.log('ux_report')
   const reportResult = await run('ux_report', {
     title: '订单流程走查',
+    language: 'zh-CN',
+    product_type: 'internal-tool',
     persona_ids: ['investor', 'ops'],
     mode: 'review',
     findings: [
@@ -232,6 +251,22 @@ async function remove(id: string) {
         description: '手滑点到删除就直接删了，没有再问一次，运营每天处理上百条很容易误删。',
         rationale: 'R-04', suggestion: '补充二次确认',
       },
+      // R-10 只有 static 证据 → 视觉结论证据不足，必须丢弃
+      {
+        rule: 'R-10', persona_refs: ['ops'], impact: 'low', file: 'src/pages/order.css',
+        surface: '订单页', headline: '操作区域显得拥挤',
+        description: '多个操作紧挨在一起，用户很难快速区分主要操作与次要操作。',
+        rationale: 'CSS 间距候选', suggestion: '重新检查操作分组',
+        evidence_level: 'static',
+      },
+      // rendered 标签没有任何截图/DOM 引用 → 不能只升级标签
+      {
+        rule: 'R-13', persona_refs: ['investor'], impact: 'low', file: 'src/pages/Order.tsx',
+        surface: '订单页', headline: '页面主要操作不清楚',
+        description: '进入页面后同时看到多个操作，用户不能快速判断应该先做什么。',
+        rationale: '首屏候选', suggestion: '检查主要操作层级',
+        evidence_level: 'rendered',
+      },
     ],
   })
   const reportFindings = reportResult.findings as UxFinding[]
@@ -241,7 +276,13 @@ async function remove(id: string) {
   const r09 = reportFindings.find((f) => f.technical.rule === 'R-09')
   check('R-09 全画像命中（share 1.0 → reach wide）', r09?.technical.severity.reach === 'wide' && r09.technical.severity.level === 'P0', JSON.stringify(r09?.technical.severity))
   check('严重度用人话标签', r09?.human.severity_label === '一级问题', String(r09?.human.severity_label))
-  check('无 locator / 未知规则 / 代码腔描述被丢弃', (reportResult.dropped as unknown[]).length === 3, JSON.stringify(reportResult.dropped))
+  check('无 locator / 未知规则 / 代码腔 / 证据不足被丢弃', (reportResult.dropped as unknown[]).length === 5, JSON.stringify(reportResult.dropped))
+  check('视觉规则没有 rendered 证据时不能定稿',
+    (reportResult.dropped as Array<{ rule?: string; reason: string }>).some((item) =>
+      item.rule === 'R-10' && item.reason.includes('rendered')))
+  check('rendered/interactive 标签必须附带可复核证据',
+    (reportResult.dropped as Array<{ rule?: string; reason: string }>).some((item) =>
+      item.rule === 'R-13' && item.reason.includes('evidence_refs')))
   check('丢弃原因点名"写用户会遇到什么"', (reportResult.dropped as Array<{ reason: string }>).some((d) => d.reason.includes('用户会遇到什么')), JSON.stringify(reportResult.dropped))
   const sanitized = reportFindings.find((f) => f.technical.rule === 'R-04')
   check('surface 给文件路径时被净化为路由路径', sanitized?.surface === '/orders', String(sanitized?.surface))
@@ -257,7 +298,12 @@ async function remove(id: string) {
     !handoffPrompt.includes('主题变量') && !handoffPrompt.includes('dark: 变体'), handoffPrompt)
   check('交付 Prompt 声明局部上下文边界并允许修改文案',
     handoffPrompt.includes('部分代码') && handoffPrompt.includes('可以直接修改文案'), handoffPrompt)
+  const englishHandoff = deliveryPrompt(r09 as UxFinding, 'en')
+  check('交付 Prompt 可输出英文',
+    englishHandoff.includes('Observed behavior:') && englishHandoff.includes('complete project context'))
   check('报告含共性问题小节', String(reportResult.markdown).includes('共性问题'))
+  check('报告记录产品类型与输出语言',
+    reportResult.product_type === 'internal-tool' && reportResult.language === 'zh-CN')
   check('报告首屏用人话严重度而非 P0~P3', (() => {
     const markdown = String(reportResult.markdown)
     const heading = markdown.split('\n').filter((line) => line.startsWith('### '))
@@ -301,10 +347,14 @@ async function remove(id: string) {
     JSON.stringify(live === undefined ? [] : resolveSelector(live, '三级以下')))
   check('「全部」批量选择器命中所有条目',
     live !== undefined && resolveSelector(live, '全部').length === reportFindings.length)
+  check('英文 “below level three” 命中三级/四级问题',
+    live !== undefined && JSON.stringify(resolveSelector(live, 'below level three')) === JSON.stringify([minorId]))
+  check('英文 “item 2” 命中第二条',
+    live !== undefined && resolveSelector(live, 'item 2')[0] === reportFindings[1]?.id)
 
   // ── 3b. /ux judge 脚本接口：卡片按钮的通道（显式 reportId + 逗号分隔批量）──
   console.log('/ux judge（脚本接口）')
-  const command = createUxCommand('detect')
+  const command = createUxCommand('detect', 'zh-CN')
   const judgedIds = reportFindings
     .filter((f) => f.technical.severity.level === 'P0')
     .map((f) => f.id)
@@ -331,6 +381,8 @@ async function remove(id: string) {
   await run('ux_scan', { paths: ['src'] })
   const secondReport = await run('ux_report', {
     title: '订单流程复查',
+    language: 'zh-CN',
+    product_type: 'internal-tool',
     persona_ids: ['investor', 'ops'],
     mode: 'auto',
     findings: [{
@@ -368,7 +420,7 @@ async function remove(id: string) {
     const blocked = command.handler(scanInvocation) as { kind: string; text: string }
     check('无 persona 时 /ux scan 拒绝', blocked.kind === 'error')
     check('拒绝文案引导说话而非敲命令',
-      blocked.text.includes('帮我初始化') && !blocked.text.includes('/ux init'), blocked.text)
+      blocked.text.includes('先初始化') && !blocked.text.includes('/ux init'), blocked.text)
   } finally {
     rmSync(emptyRoot, { recursive: true, force: true })
   }
@@ -478,6 +530,8 @@ async function remove(id: string) {
     )
     const viewData = (viewNode?.data ?? {}) as {
       mode: string
+      language: string
+      productType: string
       findings: Array<{
         status: string
         surface: string
@@ -499,12 +553,13 @@ async function remove(id: string) {
       f.deliveryPrompt.includes('观察到的现象：')
       && f.deliveryPrompt.includes('不代表完整项目上下文')
       && !f.deliveryPrompt.includes('suggestion:')))
-    const renderCard = (status: string): string => renderToStaticMarkup(createElement(
+    const renderCard = (status: string, language = viewData.language): string => renderToStaticMarkup(createElement(
       UxReportNodeView as ComponentType<Record<string, unknown>>,
       {
         node: {
           data: {
             ...viewData,
+            language,
             findings: viewData.findings.map((finding, index) =>
               index === 0 ? { ...finding, status } : finding),
           },
@@ -518,6 +573,9 @@ async function remove(id: string) {
       renderCard('confirmed_explicit').includes('复制给 AI 的任务 Prompt'))
     check('隐式确认代表已经改掉，不再显示修复 Prompt 按钮',
       !renderCard('confirmed_implicit').includes('复制给 AI 的任务 Prompt'))
+    check('英文报告卡片使用英文操作文案',
+      renderCard('confirmed_explicit', 'en').includes('Copy task Prompt for AI')
+      && !renderCard('confirmed_explicit', 'en').includes('确认存在'))
     check('卡片带模式，review 才渲染批量条', viewData.mode === 'review')
   } else {
     check('存在 start/update 事件配对', false, JSON.stringify(reportEvents.map((e) => e.type)))
@@ -537,6 +595,55 @@ async function remove(id: string) {
   check('旧事件归一为三段式', legacy.human.headline === '旧依据' && legacy.technical.rule === 'R-06')
   check('旧事件的 surface 不退化为文件路径', !legacy.surface.includes('.tsx'), legacy.surface)
   check('旧状态映射到五态', legacy.status === 'confirmed_explicit')
+
+  // ── 9. 真实证据引用满足门槛后，rendered / interactive finding 可以定稿 ─────
+  console.log('多证据定稿')
+  const evidenceReport = await run('ux_report', {
+    title: '订单页视觉与流程复核',
+    language: 'zh-CN',
+    product_type: 'ecommerce',
+    persona_ids: ['investor'],
+    mode: 'review',
+    scope_paths: ['src/pages/Order.tsx', 'src/pages/order.css'],
+    findings: [{
+      rule: 'R-12',
+      persona_refs: ['investor'],
+      impact: 'low',
+      verified_by: 'model+browser',
+      evidence_level: 'rendered',
+      evidence_refs: ['screenshot: /orders at 390x844; emoji competes with the primary action'],
+      file: 'src/pages/order.css',
+      surface: '订单页',
+      headline: '装饰符号抢占了主要操作的注意力',
+      description: '进入订单页后，醒目的装饰符号比主要操作更先吸引注意，用户需要额外寻找下一步入口。',
+      rationale: '移动端截图中装饰符号的视觉权重高于主要按钮',
+      suggestion: '统一装饰元素与产品图标体系',
+    }, {
+      rule: 'R-14',
+      persona_refs: ['investor'],
+      impact: 'low',
+      verified_by: 'model+browser',
+      evidence_level: 'interactive',
+      evidence_refs: ['task steps: orders → select → confirm → second confirm → result; repeated confirmation observed'],
+      file: 'src/pages/Order.tsx',
+      surface: '订单页',
+      headline: '完成单次操作需要连续确认两次',
+      description: '用户已经确认过操作对象后还会再次看到含义相同的确认步骤，完成任务需要重复判断。',
+      rationale: '按个人投资者画像完成任务时记录到两个连续且含义相同的确认步骤',
+      suggestion: '检查两次确认是否都承担必要的风险告知',
+    }],
+  })
+  const evidenceFindings = evidenceReport.findings as UxFinding[]
+  check('带截图引用的 R-12 可以作为 rendered finding 定稿',
+    evidenceFindings.some((finding) =>
+      finding.technical.rule === 'R-12'
+      && finding.technical.evidence_level === 'rendered'
+      && finding.technical.evidence_refs.length === 1))
+  check('带 Persona 任务步骤的 R-14 可以作为 interactive finding 定稿',
+    evidenceFindings.some((finding) =>
+      finding.technical.rule === 'R-14'
+      && finding.technical.evidence_level === 'interactive'
+      && finding.technical.evidence_refs.length === 1))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

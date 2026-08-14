@@ -150,7 +150,6 @@ const SOURCE_EXTENSIONS: Record<StackKind, readonly string[]> = {
   'vue': ['.vue', '.ts', '.js'],
 }
 
-/** 收集范围：相对项目根的文件或目录列表；缺省为 ['src']。 */
 export function gatherFiles(
   root: string,
   paths: readonly string[],
@@ -158,8 +157,30 @@ export function gatherFiles(
   maxFiles: number,
   stack: StackKind,
 ): ScopeGather {
+  return gatherByExtensions(root, paths, excludes, maxFiles, SOURCE_EXTENSIONS[stack])
+}
+
+/** 收集与组件范围相邻的样式文件，供 CSS/布局候选分析。 */
+export function gatherStyleFiles(
+  root: string,
+  paths: readonly string[],
+  excludes: readonly string[],
+  maxFiles: number,
+): ScopeGather {
+  return gatherByExtensions(root, paths, excludes, maxFiles, [
+    '.css', '.scss', '.sass', '.less', '.pcss',
+  ])
+}
+
+/** 收集范围：相对项目根的文件或目录列表；缺省为 ['src']。 */
+function gatherByExtensions(
+  root: string,
+  paths: readonly string[],
+  excludes: readonly string[],
+  maxFiles: number,
+  extensions: readonly string[],
+): ScopeGather {
   const excludesSet = new Set([...DEFAULT_EXCLUDES, ...excludes])
-  const extensions = SOURCE_EXTENSIONS[stack]
   const targets = paths.length > 0 ? paths : ['src']
   const files = new Map<string, ScopeFile>()
   let truncated = false

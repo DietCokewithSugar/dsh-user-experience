@@ -28,7 +28,9 @@ import { detectStack } from './project'
 import type { UxConfig } from './config'
 
 /** 值得走查的前端源码扩展名（纯后端改动不进入）。 */
-const FRONTEND_EXTENSIONS = ['.tsx', '.jsx', '.vue', '.ts', '.js']
+const FRONTEND_EXTENSIONS = [
+  '.tsx', '.jsx', '.vue', '.ts', '.js', '.css', '.scss', '.sass', '.less', '.pcss',
+]
 
 /** 一定不是"用户可感知界面"的路径特征。 */
 const NON_UI_PATH = /(?:^|\/)(?:node_modules|dist|build|out|coverage|__tests__|__mocks__|scripts|server|api|migrations)\//u
@@ -101,16 +103,17 @@ export function buildAutoScanPrompt(units: readonly string[], files: readonly st
   return [
     '[dsh-user-experience R7] 刚才的改动涉及前端界面，按下面的方式**安静地**跑一次 UX 走查：',
     '',
-    `1. 调用 ux_scan，paths 用改动所属的完整目录：${units.map((unit) => `"${unit}"`).join('、')}。`,
+    `1. 根据项目 README、路由和本次流程判断 product_type，并跟随用户/项目语言；调用 ux_scan 时传入这两个字段，paths 用改动所属的完整目录：${units.map((unit) => `"${unit}"`).join('、')}。`,
     '   **扫描单元是完整组件 / 页面，不是改动的那几行**——没有空态、没有错误分支、没有二次确认',
     '   这类缺失型问题在 diff 里根本不存在，只看改动行必然漏掉。',
     `   （本次改动的文件：${files.join('、')}）`,
-    '2. 按 .ux/personas.yml 的画像判定，调用一次 ux_report 定稿，mode 设为 "auto"。',
-    '3. 【重要】这次走查是你自己发起的，不是用户要求的：',
+    '2. 按 .ux/personas.yml 的画像和产品类型重点判定；CSS/布局候选没有截图时只能作为候选，不得输出需要 rendered/interactive 的规则。',
+    '3. 调用一次 ux_report 定稿，带相同的 product_type/language，mode 设为 "auto"。',
+    '4. 【重要】这次走查是你自己发起的，不是用户要求的：',
     '   - 全程不要向用户提问、不要索要确认；',
     '   - 报告出来后，只有存在一级 / 二级问题时才用一句话提示用户；',
     '   - 没有一级 / 二级问题就安静收尾，不要复述报告，继续等用户的下一个指令。',
-    '4. 如果这次改动明显与界面体验无关（纯类型、纯工具函数），直接跳过走查，不要硬跑。',
+    '5. 如果这次改动明显与界面体验无关（纯类型、纯工具函数），直接跳过走查，不要硬跑。',
   ].join('\n')
 }
 

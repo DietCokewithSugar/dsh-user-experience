@@ -8,11 +8,12 @@
  * - R-02 为条件触发规则：仅当本轮未发现 P0/P1 问题时才执行。
  */
 
-import type { FindingCategory } from './types'
+import type { EvidenceLevel, FindingCategory } from './types'
 
 export type RuleId =
   | 'R-01' | 'R-02' | 'R-03' | 'R-04'
   | 'R-05' | 'R-06' | 'R-07' | 'R-08' | 'R-09'
+  | 'R-10' | 'R-11' | 'R-12' | 'R-13' | 'R-14'
 
 export interface RuleDef {
   id: RuleId
@@ -28,6 +29,8 @@ export interface RuleDef {
   fastLane: boolean
   /** 条件触发（仅当本轮无 P0/P1 时执行）。 */
   conditional: boolean
+  /** 该规则可以进入正式报告的最低证据等级。 */
+  minimumEvidence: EvidenceLevel
 }
 
 export const RULES: readonly RuleDef[] = [
@@ -40,6 +43,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: false,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-02',
@@ -50,6 +54,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: false,
     fastLane: false,
     conditional: true,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-03',
@@ -60,6 +65,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: false,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-04',
@@ -70,6 +76,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-05',
@@ -80,6 +87,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-06',
@@ -90,6 +98,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-07',
@@ -100,6 +109,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-08',
@@ -110,6 +120,7 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: false,
     conditional: false,
+    minimumEvidence: 'static',
   },
   {
     id: 'R-09',
@@ -120,6 +131,62 @@ export const RULES: readonly RuleDef[] = [
     astAssertable: true,
     fastLane: true,
     conditional: false,
+    minimumEvidence: 'static',
+  },
+  {
+    id: 'R-10',
+    name: '布局拥挤或分组层级不清',
+    category: 'layout-density',
+    signal: '同一区域承载过多操作，或间距/分组信号不足',
+    astAssertion: '源码只能提取高密度操作与间距候选；必须结合真实截图确认视觉结果',
+    astAssertable: true,
+    fastLane: false,
+    conditional: false,
+    minimumEvidence: 'rendered',
+  },
+  {
+    id: 'R-11',
+    name: '长列表缺少浏览控制',
+    category: 'layout-density',
+    signal: '列表直接渲染，未发现分页、虚拟滚动、折叠或数量限制',
+    astAssertion: '列表渲染路径中未发现常见的分页/虚拟化/截断信号',
+    astAssertable: true,
+    fastLane: false,
+    conditional: false,
+    minimumEvidence: 'static',
+  },
+  {
+    id: 'R-12',
+    name: '装饰元素与视觉语言不一致',
+    category: 'layout-density',
+    signal: 'Emoji、文字图标与图标库混用，可能破坏产品视觉一致性',
+    astAssertion: '源码可定位 Emoji/装饰元素；是否影响审美必须结合产品类型与截图判断',
+    astAssertable: true,
+    fastLane: false,
+    conditional: false,
+    minimumEvidence: 'rendered',
+  },
+  {
+    id: 'R-13',
+    name: '页面用途或主要操作不清',
+    category: 'navigation-guidance',
+    signal: '页面有多个操作，但缺少标题、用途说明、主要操作层级或首次使用指引',
+    astAssertion: '源码只能提取标题和操作入口候选；是否容易理解必须结合首屏截图判断',
+    astAssertable: true,
+    fastLane: false,
+    conditional: false,
+    minimumEvidence: 'rendered',
+  },
+  {
+    id: 'R-14',
+    name: '关键任务存在冗余交互',
+    category: 'interaction-flow',
+    signal: '完成关键任务需要不必要的跳转、重复输入、弹窗或确认步骤',
+    astAssertion: '单个文件无法证明流程冗余；必须按 persona 实际执行任务并记录步骤',
+    astAssertable: false,
+    fastLane: false,
+    conditional: false,
+    minimumEvidence: 'interactive',
   },
 ]
 

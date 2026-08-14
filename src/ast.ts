@@ -68,6 +68,12 @@ export const SUBMIT_HANDLER = /submit|save|confirm|delete|remove/iu
 /** 函数体中出现"空态覆盖"的信号。 */
 export const EMPTY_PATTERN = /(?:\.length\s*(?:===|==|!==|!=|<=|>=|<|>)\s*0)|!\s*[\w[\].]*\.length|empty|isEmpty|hasData|暂无|空数据|空态|无数据|no data|no results|isBlank/iu
 
+/** 长列表控制信号：分页、虚拟化、窗口化、截断或显式数量限制。 */
+export const LIST_CONTROL_PATTERN = /paginat|pageSize|page_size|virtual|windowed|react-window|react-virtual|useVirtual|infinite|loadMore|slice\s*\(|take\s*\(|limit\b|showMore/iu
+
+/** 用户可见 Emoji / 图形符号。 */
+export const EMOJI_PATTERN = /\p{Extended_Pictographic}/u
+
 /** 函数体中出现"加载分支"的信号（作用于条件表达式条件文本）。 */
 export const LOADING_PATTERN = /loading|pending|fetching|submitting/iu
 
@@ -87,6 +93,12 @@ interface FunctionFrame {
   loadingSite: { node: ts.Node; snippet: string } | undefined
   /** R-05：是否存在列表渲染（.map）。 */
   hasMapRender: boolean
+  /** R-11：列表渲染定位。 */
+  mapSite: { node: ts.Node; snippet: string } | undefined
+  /** R-10/R-13：组件中的可操作元素。 */
+  actionSites: Array<{ node: ts.Node; snippet: string }>
+  /** R-13：页面/区块标题数量。 */
+  headingCount: number
   /** R-04：破坏性调用站点。 */
   destructiveSites: Array<{ node: ts.Node; snippet: string }>
 }
@@ -174,16 +186,56 @@ function isUserFacingCallArg(node: ts.Node): boolean {
 
 /** 一个函数结束时，收敛 R-05 / R-06 的候选。 */
 function finalizeFrame(ctx: WalkContext, frame: FunctionFrame): void {
+  const frameText = frame.node.getText(ctx.sourceFile)
   // R-05：有 loading 分支、有列表渲染、无空态覆盖。
   if (frame.loadingSite !== undefined && frame.hasMapRender) {
-    const text = frame.node.getText(ctx.sourceFile)
-    if (!EMPTY_PATTERN.test(text)) {
+    if (!EMPTY_PATTERN.test(frameText)) {
       addCandidate(ctx, {
         rule: 'R-05',
         symbol: frame.symbol,
         line: lineOf(frame.loadingSite.node, ctx.sourceFile),
         snippet: frame.loadingSite.snippet,
         note: '列表存在加载分支，但未发现空数组/空态分支（loading 有、empty 无）',
+        verified_by: 'model+ast',
+      })
+    }
+  }
+
+  // R-11：列表直接渲染，未见分页/虚拟化/显式数量限制。
+  if (frame.mapSite !== undefined && !LIST_CONTROL_PATTERN.test(frameText)) {
+    addCandidate(ctx, {
+      rule: 'R-11',
+      symbol: frame.symbol,
+      line: lineOf(frame.mapSite.node, ctx.sourceFile),
+      snippet: frame.mapSite.snippet,
+      note: '列表直接渲染，当前组件内未发现分页、虚拟滚动、折叠或显式数量限制；需结合真实数据规模判断影响',
+      verified_by: 'model+ast',
+    })
+  }
+
+  // R-10/R-13 只产出待截图确认的结构候选。
+  if (frame.actionSites.length >= 8) {
+    const site = frame.actionSites[0]
+    if (site !== undefined) {
+      addCandidate(ctx, {
+        rule: 'R-10',
+        symbol: frame.symbol,
+        line: lineOf(site.node, ctx.sourceFile),
+        snippet: site.snippet,
+        note: `同一组件静态包含 ${frame.actionSites.length} 个可操作元素，可能造成首屏功能堆叠；必须用真实页面截图确认`,
+        verified_by: 'model+ast',
+      })
+    }
+  }
+  if (frame.actionSites.length >= 2 && frame.headingCount === 0) {
+    const site = frame.actionSites[0]
+    if (site !== undefined) {
+      addCandidate(ctx, {
+        rule: 'R-13',
+        symbol: frame.symbol,
+        line: lineOf(site.node, ctx.sourceFile),
+        snippet: site.snippet,
+        note: '组件包含多个操作入口，但源码中未发现 h1/h2 或等价页面标题；是否难以理解页面用途必须结合首屏截图确认',
         verified_by: 'model+ast',
       })
     }
@@ -282,6 +334,9 @@ function walk(node: ts.Node, ctx: WalkContext): void {
       catchFeedback: false,
       loadingSite: undefined,
       hasMapRender: false,
+      mapSite: undefined,
+      actionSites: [],
+      headingCount: 0,
       destructiveSites: [],
     }
     ctx.frames.push(inner)
@@ -317,6 +372,19 @@ function walk(node: ts.Node, ctx: WalkContext): void {
     if (ts.isCallExpression(node) && insideJsx(node)
       && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map') {
       frame.hasMapRender = true
+      frame.mapSite ??= { node, snippet: snippetOf(node, ctx.sourceFile) }
+    }
+  }
+
+  // ── R-10/R-13：操作密度、标题与主要操作的静态候选 ──
+  if (frame !== undefined && (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))) {
+    const tag = jsxTagName(node)
+    const name = ts.isIdentifier(tag) ? tag.text : tag.getText(ctx.sourceFile)
+    if (/^(?:button|a|input|select|textarea)$/iu.test(name) || /Button|Link|Select|Input|MenuItem/iu.test(name)) {
+      frame.actionSites.push({ node, snippet: snippetOf(node, ctx.sourceFile) })
+    }
+    if (/^h[1-2]$/iu.test(name) || /PageTitle|Heading|Header/iu.test(name)) {
+      frame.headingCount += 1
     }
   }
 
@@ -421,6 +489,17 @@ function walk(node: ts.Node, ctx: WalkContext): void {
 
   // ── R-02：术语候选（仅提取位置，同义由模型判断）──
   if (ctx.termCount < 12 && (ts.isJsxText(node) || isLabelLikeAttribute(node) || isJsxTextChild(node))) {
+    const raw = jsxRawText(node)
+    if (raw !== undefined && EMOJI_PATTERN.test(raw)) {
+      addCandidate(ctx, {
+        rule: 'R-12',
+        symbol: enclosingSymbol(ctx),
+        line: lineOf(node, ctx.sourceFile),
+        snippet: raw,
+        note: '用户可见内容使用 Emoji；是否与产品定位、图标体系和视觉语言一致需结合真实截图判断',
+        verified_by: 'model+ast',
+      })
+    }
     const text = jsxVisibleText(node)
     if (text !== undefined) {
       const key = text
@@ -484,7 +563,7 @@ function handlerLooksAsync(expression: ts.Expression): boolean {
 }
 
 /** JSX 文本或类 label 属性中的可见文本（术语候选素材）。 */
-function jsxVisibleText(node: ts.Node): string | undefined {
+function jsxRawText(node: ts.Node): string | undefined {
   let raw = ''
   if (ts.isJsxText(node)) {
     raw = node.text.trim()
@@ -497,6 +576,12 @@ function jsxVisibleText(node: ts.Node): string | undefined {
   } else {
     return undefined
   }
+  return raw
+}
+
+function jsxVisibleText(node: ts.Node): string | undefined {
+  const raw = jsxRawText(node)
+  if (raw === undefined) return undefined
   if (raw.length < 2 || raw.length > 30) return undefined
   if (/^(https?:)?\/\//u.test(raw)) return undefined
   if (/[{}<>;=()[\]]/u.test(raw)) return undefined

@@ -23,15 +23,17 @@ import { featureDigestOf, fingerprintOf, symbolPathOf } from './fingerprint'
 import { loadGlossary, mergeGlossary, type GlossaryTerm } from './glossary'
 import { comparableOf, recordScan, reconcile, type ComparableFinding } from './history'
 import { codeSpeakReason } from './human-copy'
+import { isChinese, resolveOutputLanguage, type OutputLanguage } from './i18n'
 import { loadLocalRules } from './local-rules'
 import { resolveMode } from './mode'
 import { loadPersonas } from './persona'
-import { categoryOfRule, isRuleId } from './rules'
+import { normalizeProductType, productReviewFocus, type ProductType } from './product'
+import { categoryOfRule, isRuleId, RULE_BY_ID } from './rules'
 import { takeScope } from './scope'
 import { sanitizeSurface, surfaceCandidatesFor, createSurfaceIndex } from './surface'
 import {
   isUrgent, levelOf, reachOf, severityLabel, SEVERITY_ORDER,
-  type Impact, type ImpactConfidence, type UxFinding, type UxMode, type VerifiedBy,
+  type EvidenceLevel, type Impact, type ImpactConfidence, type UxFinding, type UxMode, type VerifiedBy,
 } from './types'
 import type { UxConfig } from './config'
 
@@ -43,6 +45,8 @@ export interface FindingDraft {
   impact: Impact
   impact_confidence?: ImpactConfidence
   verified_by?: VerifiedBy
+  evidence_level?: EvidenceLevel
+  evidence_refs?: string[]
   file: string
   symbol?: string
   line?: number
@@ -58,6 +62,8 @@ export interface ReportResult {
   report_id: string
   title: string
   mode: UxMode
+  language: OutputLanguage
+  product_type: ProductType
   scope: string[]
   findings: UxFinding[]
   dropped: Array<{ reason: string; rule?: string; file?: string }>
@@ -73,6 +79,12 @@ export interface ReportResult {
 const instanceToken = randomUUID().slice(0, 8)
 
 let reportSeq = 0
+
+const EVIDENCE_ORDER: Record<EvidenceLevel, number> = {
+  static: 0,
+  rendered: 1,
+  interactive: 2,
+}
 
 function mintReportId(): string {
   reportSeq += 1
@@ -91,17 +103,25 @@ function bySeverity(left: UxFinding, right: UxFinding): number {
 
 /** 渲染一份 Markdown 报告（spec §R5；人话在前，技术细节缩进在后）。 */
 function renderReport(result: ReportResult, personas: ReadonlyMap<string, string>): string {
+  const zh = isChinese(result.language)
+  const evidenceLevels = [...new Set(result.findings.map((finding) =>
+    finding.technical.evidence_level))].join(' / ') || 'static'
+  const focus = productReviewFocus(result.product_type, result.language).join(zh ? '、' : ', ')
   const lines: string[] = [
-    `# UX 走查报告：${result.title}`,
+    `# ${zh ? 'UX 走查报告' : 'UX walkthrough report'}: ${result.title}`,
     '',
-    '> 证据等级：**static**（仅静态源码证据；本版不覆盖视觉类问题——对比度、热区尺寸、文字截断、焦点顺序）。',
+    `> ${zh ? '产品类型' : 'Product type'}: **${result.product_type}**`
+      + ` · ${zh ? '证据等级' : 'Evidence'}: **${evidenceLevels}**`,
+    `> ${zh ? '本类产品重点' : 'Product-specific focus'}: ${focus}`,
     '',
   ]
   const findings = [...result.findings].sort(bySeverity)
   const common = findings.filter(isCommon)
   if (common.length > 0) {
-    lines.push('## 共性问题（≥ 2 个画像独立命中，可信度更高）', '')
-    for (const finding of common) lines.push(renderFinding(finding, personas), '')
+    lines.push(zh
+      ? '## 共性问题（≥ 2 个画像独立命中，可信度更高）'
+      : '## Shared findings (independently observed for ≥2 personas)', '')
+    for (const finding of common) lines.push(renderFinding(finding, personas, result.language), '')
   }
   const seen = new Set(common.map((finding) => finding.id))
   const perPersona = new Map<string, UxFinding[]>()
@@ -114,11 +134,12 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
     }
   }
   for (const [personaId, list] of perPersona) {
-    lines.push(`## 个性问题 — ${personas.get(personaId) ?? personaId}`, '')
-    for (const finding of list) lines.push(renderFinding(finding, personas), '')
+    lines.push(`## ${zh ? '画像问题' : 'Persona findings'} — ${personas.get(personaId) ?? personaId}`, '')
+    for (const finding of list) lines.push(renderFinding(finding, personas, result.language), '')
   }
   if (findings.length === 0) {
-    lines.push('## 结果', '', '本轮未发现问题。宁缺毋滥：不要为了覆盖面凑数。', '')
+    lines.push(zh ? '## 结果' : '## Result', '',
+      zh ? '本轮未发现有充分证据支持的问题。' : 'No findings with sufficient evidence were found in this walkthrough.', '')
   }
 
   const counts = new Map<string, number>()
@@ -126,26 +147,38 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
     const label = finding.human.severity_label
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }
-  const countText = ['一级问题', '二级问题', '三级问题', '四级问题']
+  const countText = (zh
+    ? ['一级问题', '二级问题', '三级问题', '四级问题']
+    : ['Level one', 'Level two', 'Level three', 'Level four'])
     .filter((label) => counts.has(label))
     .map((label) => `${label} × ${counts.get(label) ?? 0}`)
-    .join('，') || '无'
-  lines.push('## 汇总', '', `- 本轮输出 ${findings.length} 条（${countText}）`)
+    .join(zh ? '，' : ', ') || (zh ? '无' : 'none')
+  lines.push(zh ? '## 汇总' : '## Summary', '',
+    zh ? `- 本轮输出 ${findings.length} 条（${countText}）`
+      : `- ${findings.length} findings (${countText})`)
   if (result.implicit_confirmed > 0) {
-    lines.push(`- 上一轮有 ${result.implicit_confirmed} 条问题在本次走查中消失、且位置确实被重新扫描 → 记为已改进（隐式确认）`)
+    lines.push(zh
+      ? `- 上一轮有 ${result.implicit_confirmed} 条问题在本次走查中消失、且位置确实被重新扫描 → 记为已改进（隐式确认）`
+      : `- ${result.implicit_confirmed} previous findings disappeared from locations that were re-scanned and are marked improved`)
   }
   if (result.stale > 0) {
-    lines.push(`- ${result.stale} 条历史问题的位置本次未被扫描，无法判定，不计入指标`)
+    lines.push(zh
+      ? `- ${result.stale} 条历史问题的位置本次未被扫描，无法判定，不计入指标`
+      : `- ${result.stale} previous findings were outside this scan and are excluded from metrics`)
   }
-  lines.push(...confirmationHint(result.mode, findings))
+  lines.push(...confirmationHint(result.mode, findings, result.language))
   if (result.dropped.length > 0) {
-    lines.push(`- 丢弃 ${result.dropped.length} 条：`)
+    lines.push(zh ? `- 丢弃 ${result.dropped.length} 条：` : `- Dropped ${result.dropped.length} unsupported findings:`)
     for (const dropped of result.dropped) {
-      lines.push(`  - ${dropped.reason}${dropped.file === undefined ? '' : `（${dropped.file}）`}`)
+      lines.push(zh
+        ? `  - ${dropped.reason}${dropped.file === undefined ? '' : `（${dropped.file}）`}`
+        : `  - ${dropped.rule ?? 'Finding'}${dropped.file === undefined ? '' : ` at ${dropped.file}`} did not meet report constraints`)
     }
   }
   if (result.glossary_terms > 0) {
-    lines.push(`- 术语表更新 ${result.glossary_terms} 条（.ux/glossary.yml）`)
+    lines.push(zh
+      ? `- 术语表更新 ${result.glossary_terms} 条（.ux/glossary.yml）`
+      : `- Glossary contains ${result.glossary_terms} terms (.ux/glossary.yml)`)
   }
   return lines.join('\n')
 }
@@ -155,20 +188,36 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
  * **auto 模式不索要确认**——agent 自己发起的走查由 agent 自己消化，
  * 只在出现一级 / 二级问题时提示一句（v0.1.1 §4.2）。
  */
-function confirmationHint(mode: UxMode, findings: readonly UxFinding[]): string[] {
+function confirmationHint(
+  mode: UxMode,
+  findings: readonly UxFinding[],
+  language: OutputLanguage,
+): string[] {
+  const zh = isChinese(language)
   if (mode === 'auto') {
     const urgent = findings.filter((finding) => isUrgent(finding.technical.severity.level))
     if (urgent.length === 0) return []
-    return [`- 其中 ${urgent.length} 条是一级 / 二级问题，建议看一眼；不急的话报告卡片随时可以回来判定`]
+    return [zh
+      ? `- 其中 ${urgent.length} 条是一级 / 二级问题，建议优先查看`
+      : `- ${urgent.length} level-one/two findings should be reviewed first`]
   }
   if (mode === 'interactive') {
-    return ['- 逐条确认：卡片上点「确认存在 / 不是问题」，或直接说「第 2 条不成立」——不需要记任何编号']
+    return [zh
+      ? '- 逐条确认：卡片上点「确认存在 / 不是问题」，或直接说「第 2 条不成立」'
+      : '- Review one by one using Confirm / Not an issue on each card']
   }
-  return ['- 批量确认：卡片上勾选后一并提交，或直接说「这几条都对」「三级以下全部忽略」——不需要记任何编号']
+  return [zh
+    ? '- 批量确认：卡片上勾选后一并提交，或直接说「这几条都对」「三级以下全部忽略」'
+    : '- Select multiple findings on the card to confirm or reject them together']
 }
 
 /** 单条 finding：人话在前，技术细节缩进在后（双读者，§3.1）。 */
-function renderFinding(finding: UxFinding, personas: ReadonlyMap<string, string>): string {
+function renderFinding(
+  finding: UxFinding,
+  personas: ReadonlyMap<string, string>,
+  language: OutputLanguage,
+): string {
+  const zh = isChinese(language)
   const tech = finding.technical
   const locator = `${tech.locator.file}`
     + (tech.locator.line === undefined ? '' : `:${String(tech.locator.line)}`)
@@ -179,13 +228,15 @@ function renderFinding(finding: UxFinding, personas: ReadonlyMap<string, string>
     '',
     finding.human.description,
     '',
-    '<details><summary>技术细节</summary>',
+    `<details><summary>${zh ? '技术细节' : 'Technical details'}</summary>`,
     '',
-    `- 位置：\`${locator}\``,
-    `- 规则：${tech.rule}（${tech.category}）｜证据：${tech.evidence_level} / ${tech.verified_by}`,
-    `- 命中画像：${refs}｜内部编号：${finding.id} / ${tech.severity.level}`,
-    `- 依据：${tech.rationale}`,
-    `- 建议：${tech.suggestion}`,
+    `- ${zh ? '位置' : 'Location'}: \`${locator}\``,
+    `- ${zh ? '规则' : 'Rule'}: ${tech.rule} (${tech.category})`
+      + ` | ${zh ? '证据' : 'Evidence'}: ${tech.evidence_level} / ${tech.verified_by}`,
+    `- ${zh ? '证据引用' : 'Evidence references'}: ${tech.evidence_refs.join(' | ') || (zh ? '源码定位' : 'source location')}`,
+    `- ${zh ? '命中画像' : 'Personas'}: ${refs} | ${zh ? '内部编号' : 'Internal ID'}: ${finding.id} / ${tech.severity.level}`,
+    `- ${zh ? '依据' : 'Rationale'}: ${tech.rationale}`,
+    `- ${zh ? '建议' : 'Suggestion'}: ${tech.suggestion}`,
     '',
     '</details>',
   ].join('\n')
@@ -195,8 +246,11 @@ const DRAFT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    rule: { type: 'string', required: true, description: 'R-01 … R-09' },
-    category: { type: 'string', description: 'microcopy | state-coverage | theme-adaptation；缺省按规则推导' },
+    rule: { type: 'string', required: true, description: 'R-01 … R-14' },
+    category: {
+      type: 'string',
+      description: 'microcopy | state-coverage | theme-adaptation | layout-density | navigation-guidance | interaction-flow；缺省按规则推导',
+    },
     persona_refs: {
       type: 'array', items: { type: 'string' }, required: true,
       description: '命中该问题的 persona id 列表（非空）',
@@ -210,15 +264,23 @@ const DRAFT_SCHEMA = {
       description: 'impact 判定的把握程度；缺省 medium',
     },
     verified_by: {
-      type: 'string', enum: ['model', 'model+ast', 'ast'],
+      type: 'string', enum: ['model', 'model+ast', 'ast', 'model+browser'],
       description: '验证来源；缺省 model',
+    },
+    evidence_level: {
+      type: 'string', enum: ['static', 'rendered', 'interactive'],
+      description: 'static=源码/CSS；rendered=真实 DOM/尺寸/截图；interactive=按 persona 实际执行任务。缺省 static。',
+    },
+    evidence_refs: {
+      type: 'array', items: { type: 'string' },
+      description: '可复核证据，如截图路径、route+viewport、DOM 测量或任务步骤。rendered/interactive 必填。',
     },
     file: { type: 'string', required: true, description: '相对项目根的文件路径（locator 硬约束）' },
     symbol: { type: 'string', description: '组件 / 符号级定位' },
     line: { type: 'number', description: '行号（可选）' },
     surface: {
       type: 'string', required: true,
-      description: '人话页面名，如"管理员页面"。优先取 ux_scan 的 surface_hints；拟不出时用路由路径。'
+      description: '开发者可理解的页面名，如"管理员页面"。优先取 ux_scan 的 surface_hints；拟不出时用路由路径。'
         + '**不要给文件路径**——文件路径对人没有意义，会被丢弃并替换。',
     },
     headline: {
@@ -228,7 +290,7 @@ const DRAFT_SCHEMA = {
     description: {
       type: 'string', required: true,
       description: '用户会遇到什么（2-3 句）。❌「handleDelete 的 catch 分支中没有调用 toast」'
-        + ' ✅「删除失败时界面没有任何提示，用户以为删成功了」。写不出人话就不要报这条。',
+        + ' ✅「删除失败时界面没有任何提示，用户以为删成功了」。无法描述用户影响时不要报这条。',
     },
     feature: {
       type: 'string',
@@ -245,9 +307,11 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
     name: 'ux_report',
     description: [
       'UX 走查定稿：把你判定后的 findings 汇总成正式报告。',
-      '每条 finding 分两半——给人看的（surface 人话页面名 + headline + description）与给 AI 看的（locator / rule / severity）。',
-      'description 必须写"用户会遇到什么"，不写"代码里缺什么"；带代码腔的描述会被丢弃（写不出人话宁可不报）。',
-      'surface 必须是人话位置名或路由路径，给文件路径会被替换。',
+      '每条 finding 分两半——面向开发者的 surface/headline/description 与技术定位 locator/rule/severity。',
+      'description 必须写"用户会遇到什么"，不写"代码里缺什么"；带代码腔的描述会被丢弃。',
+      'surface 必须是开发者可理解的位置名或路由路径，给文件路径会被替换。',
+      '证据分 static/rendered/interactive：后两者必须带截图、DOM 测量或任务步骤等 evidence_refs。',
+      'R-10/R-12/R-13 至少需要 rendered，R-14 至少需要 interactive；证据不足时不得输出正式 finding。',
       '必须携带 persona_refs（每一条都非空且存在于 .ux/personas.yml）——无 persona 不出结论。',
       '硬约束：没有 locator（file）的 finding 会被丢弃并在报告中列出原因。',
       '严重度由矩阵推导：impact 由你给出，reach 由命中画像 share 之和推导（>=0.5 为 wide）；上界面时换成一级~四级问题。',
@@ -257,6 +321,15 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
     ].join(' '),
     parameters: {
       title: { type: 'string', required: true, description: '报告标题（如"订单流程 UX 走查"）' },
+      language: {
+        type: 'string',
+        description: '输出语言（zh-CN 或 en）。优先跟随当前用户使用的语言；缺省按插件配置和项目 README 推断。',
+      },
+      product_type: {
+        type: 'string',
+        enum: ['consumer', 'enterprise', 'ecommerce', 'content', 'finance', 'healthcare', 'developer-tool', 'internal-tool', 'other'],
+        description: '根据 README、路由和业务流程判断的产品类型；无法可靠判断时用 other。',
+      },
       persona_ids: {
         type: 'array',
         items: { type: 'string' },
@@ -301,6 +374,8 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           report_id: { type: 'string' },
           title: { type: 'string' },
           mode: { type: 'string' },
+          language: { type: 'string' },
+          product_type: { type: 'string' },
           scope: { type: 'array', items: { type: 'string' } },
           findings: {
             type: 'array',
@@ -337,6 +412,7 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
                     category: { type: 'string' },
                     verified_by: { type: 'string' },
                     evidence_level: { type: 'string' },
+                    evidence_refs: { type: 'array', items: { type: 'string' } },
                     persona_refs: { type: 'array', items: { type: 'string' } },
                     severity: {
                       type: 'object',
@@ -418,6 +494,8 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           configured: config.mode,
           trigger: 'user',
         }).mode
+      const language = resolveOutputLanguage(cwd, config.outputLanguage, args.language)
+      const productType = normalizeProductType(args.product_type)
 
       const dropped: ReportResult['dropped'] = []
       const merged = new Map<string, UxFinding>()
@@ -456,6 +534,29 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           continue
         }
 
+        const evidenceLevel: EvidenceLevel = draft.evidence_level === 'rendered'
+          || draft.evidence_level === 'interactive' ? draft.evidence_level : 'static'
+        const evidenceRefs = (draft.evidence_refs ?? [])
+          .map((ref) => ref.trim())
+          .filter((ref) => ref.length > 0)
+        const minimumEvidence = RULE_BY_ID.get(draft.rule)?.minimumEvidence ?? 'static'
+        if (EVIDENCE_ORDER[evidenceLevel] < EVIDENCE_ORDER[minimumEvidence]) {
+          dropped.push({
+            reason: `${draft.rule} 至少需要 ${minimumEvidence} 证据；当前只有 ${evidenceLevel}，不能把候选当成正式结论`,
+            rule: draft.rule,
+            file: draft.file,
+          })
+          continue
+        }
+        if (evidenceLevel !== 'static' && evidenceRefs.length === 0) {
+          dropped.push({
+            reason: `${evidenceLevel} finding 缺少 evidence_refs（截图、DOM 测量或任务步骤）`,
+            rule: draft.rule,
+            file: draft.file,
+          })
+          continue
+        }
+
         const file = draft.file.trim()
         const key = dedupeKey(draft.rule, file, draft.symbol)
         const existing = merged.get(key)
@@ -465,11 +566,18 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           if (draft.impact === 'high' && existing.technical.severity.impact === 'low') {
             existing.technical.severity.impact = 'high'
           }
+          existing.technical.evidence_refs = [...new Set([
+            ...existing.technical.evidence_refs, ...evidenceRefs,
+          ])]
+          if (EVIDENCE_ORDER[evidenceLevel] > EVIDENCE_ORDER[existing.technical.evidence_level]) {
+            existing.technical.evidence_level = evidenceLevel
+          }
           continue
         }
 
         const category = draft.category === 'microcopy' || draft.category === 'state-coverage'
-          || draft.category === 'theme-adaptation'
+          || draft.category === 'theme-adaptation' || draft.category === 'layout-density'
+          || draft.category === 'navigation-guidance' || draft.category === 'interaction-flow'
           ? draft.category
           : categoryOfRule(draft.rule)
         const impact: Impact = draft.impact === 'high' ? 'high' : 'low'
@@ -477,10 +585,13 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
         const reach = reachOf(shares)
         const level = levelOf(impact, reach)
         const candidate = surfaceCandidatesFor(surfaceIndex, file)
-        const surface = sanitizeSurface(draft.surface, {
+        const resolvedSurface = sanitizeSurface(draft.surface, {
           ...(candidate.route === undefined ? {} : { route: candidate.route }),
           ...(draft.symbol === undefined ? {} : { symbol: draft.symbol }),
         })
+        const surface = language === 'en' && resolvedSurface === '未命名页面'
+          ? 'Unnamed page'
+          : resolvedSurface
         const symbolPath = symbolPathOf(file, draft.symbol)
         const featureDigest = featureDigestOf(draft.feature, `${draft.rule}|${symbolPath}`)
 
@@ -491,7 +602,7 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           human: {
             headline,
             description: draft.description.trim(),
-            severity_label: severityLabel(level),
+            severity_label: severityLabel(level, language),
           },
           technical: {
             locator: {
@@ -502,9 +613,11 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
             rule: draft.rule,
             category,
             verified_by: draft.verified_by === 'model+ast' || draft.verified_by === 'ast'
+              || draft.verified_by === 'model+browser'
               ? draft.verified_by
               : 'model',
-            evidence_level: 'static',
+            evidence_level: evidenceLevel,
+            evidence_refs: evidenceRefs,
             persona_refs: refs,
             severity: {
               impact,
@@ -557,7 +670,15 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
       }
 
       const reportId = mintReportId()
-      agent.session.append('ux/report', { reportId, title: args.title, mode, scope, findings })
+      agent.session.append('ux/report', {
+        reportId,
+        title: args.title,
+        mode,
+        language,
+        productType,
+        scope,
+        findings,
+      })
 
       // 账本按 finding id 索引特征摘要落盘（下一轮比对要用）。
       recordScan(cwd, {
@@ -585,6 +706,8 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
         report_id: reportId,
         title: args.title,
         mode,
+        language,
+        product_type: productType,
         scope,
         findings,
         dropped,

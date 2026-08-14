@@ -42,6 +42,9 @@ export const CATEGORY_WORDING: Record<FindingCategory, string> = {
   microcopy: '文案表述',
   'state-coverage': '状态覆盖',
   'theme-adaptation': '深色模式适配',
+  'layout-density': '布局与信息密度',
+  'navigation-guidance': '页面理解与操作指引',
+  'interaction-flow': '交互流程',
 }
 
 /** 取分类的人话说法；未知分类原样回显。 */
