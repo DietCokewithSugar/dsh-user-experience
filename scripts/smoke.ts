@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/smoke.ts
  *
- * 覆盖：AST/CSS 候选引擎（14 条规则的代表性信号）、persona 文件读写往返、
+ * 覆盖：AST/CSS 候选引擎（27 条规则的代表性信号）、persona 文件读写往返、
  * glossary 增量合并、技术栈探测、严重度矩阵、插件 apply 注册接线。
  */
 
@@ -19,6 +19,7 @@ import { featureDigestOf, fingerprintOf, isSameFinding, symbolPathOf } from '../
 import { mergeGlossary, loadGlossary } from '../src/glossary'
 import { comparableOf, HISTORY_FILE, metricsOf, recordScan, reconcile } from '../src/history'
 import { codeSpeakReason } from '../src/human-copy'
+import { nielsenGuidance, reviewPriority } from '../src/heuristics'
 import { detectProjectLanguage, normalizeLanguage, resolveOutputLanguage } from '../src/i18n'
 import { loadLocalRules } from '../src/local-rules'
 import { extractModeFlag, modeInstruction, resolveMode } from '../src/mode'
@@ -121,6 +122,7 @@ check('R-06 catch 无用户可见反馈命中（load）', candidates.some((c) =>
 check('R-07 异步提交按钮无 disabled 命中', candidates.some((c) => c.rule === 'R-07' && c.snippet.includes('提交')))
 check('R-08 直接渲染 item.name 命中', candidates.some((c) => c.rule === 'R-08' && c.snippet.includes('item.name')))
 check('R-11 列表缺少分页/虚拟化候选', candidates.some((c) => c.rule === 'R-11'))
+check('R-17 异步等待缺少进度反馈候选', candidates.some((c) => c.rule === 'R-17'))
 check('R-03 泛化确认文案命中（确定）', candidates.some((c) => c.rule === 'R-03' && c.note.includes('确定')))
 check('R-02 术语候选提取（账户/帐号）', candidates.filter((c) => c.rule === 'R-02').some((c) => c.snippet.includes('账户') || c.snippet.includes('帐号')), candidates.filter((c) => c.rule === 'R-02').map((c) => c.snippet).join('|'))
 check('R-05 有 loading 无 empty 的样本不误报（本样本有空态）', !candidates.some((c) => c.rule === 'R-05'), candidates.filter((c) => c.rule === 'R-05').map((c) => c.note).join('|'))
@@ -169,6 +171,26 @@ check('CSS 紧凑布局产生待截图确认的 R-10 候选',
   cssCandidates.some((candidate) => candidate.rule === 'R-10'))
 check('CSS Emoji 产生待截图确认的 R-12 候选',
   cssCandidates.some((candidate) => candidate.rule === 'R-12'))
+
+const FORM_SAMPLE = `
+export function ProfileForm() {
+  return <form>
+    <input required /><input required /><input required /><input required />
+    <input required /><input /><input /><input />
+    <select>
+      <option>A</option><option>B</option><option>C</option><option>D</option><option>E</option>
+      <option>F</option><option>G</option><option>H</option><option>I</option><option>J</option>
+    </select>
+  </form>
+}
+`
+const formCandidates = extractCandidates(
+  'src/ProfileForm.tsx', FORM_SAMPLE, { maxPerRule: 5, maxPerFile: 30 },
+)
+check('R-18 表单字段/必填项过多候选',
+  formCandidates.some((candidate) => candidate.rule === 'R-18'))
+check('R-22 选项过多且无默认/推荐候选',
+  formCandidates.some((candidate) => candidate.rule === 'R-22'))
 
 // ── 2. persona 文件读写 ────────────────────────────────────────────────────────
 console.log('persona 读写')
@@ -338,13 +360,21 @@ function confirmRemove() {
 
   // ── 6. 规则目录完整性 ────────────────────────────────────────────────────────
   console.log('规则目录')
-  check('14 条规则齐全', RULES.length === 14)
+  check('27 条规则齐全', RULES.length === 27)
   check('R-09 为快车道规则', RULES.find((r) => r.id === 'R-09')?.fastLane === true)
   check('R-02 为条件触发规则', RULES.find((r) => r.id === 'R-02')?.conditional === true)
   check('视觉规则要求 rendered 证据',
     ['R-10', 'R-12', 'R-13'].every((id) => RULES.find((r) => r.id === id)?.minimumEvidence === 'rendered'))
   check('流程冗余规则要求 interactive 证据',
     RULES.find((r) => r.id === 'R-14')?.minimumEvidence === 'interactive')
+  check('信息架构与表单流程规则使用对应证据门槛',
+    RULES.find((r) => r.id === 'R-15')?.minimumEvidence === 'interactive'
+    && RULES.find((r) => r.id === 'R-18')?.minimumEvidence === 'rendered'
+    && RULES.find((r) => r.id === 'R-19')?.minimumEvidence === 'interactive')
+  check('Nielsen 十项原则完整', nielsenGuidance('zh-CN').length === 10
+    && nielsenGuidance('en').length === 10)
+  check('高频问题检查顺序完整', reviewPriority('zh-CN').length === 4
+    && reviewPriority('en')[0]?.includes('feedback') === true)
 
   // ── 7. apply 注册接线（stub 服务）───────────────────────────────────────────
   console.log('apply 接线')

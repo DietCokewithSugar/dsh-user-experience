@@ -143,6 +143,10 @@ export function OrderList() {
   check('R-12 CSS Emoji 候选', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-12'))
   check('产品类型和对应走查重点进入扫描结果',
     scanResult.product_type === 'other' && (scanResult.review_focus as unknown[]).length > 0)
+  check('Nielsen 十项原则进入走查上下文',
+    (scanResult.heuristics as unknown[]).length === 10)
+  check('高频问题检查顺序进入走查上下文',
+    (scanResult.review_priority as unknown[]).length === 4)
   const hints = scanResult.surface_hints as Array<{ file: string; route?: string; routeTitle?: string; heading?: string }>
   const orderHint = hints.find((hint) => hint.file === 'src/pages/Order.tsx')
   check('surface 素材含路由标题与 h1',

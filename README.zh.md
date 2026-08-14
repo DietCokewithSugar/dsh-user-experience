@@ -38,7 +38,8 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 ## 本次更新：视觉证据、产品类型与语言适配
 
-- **扩展为 14 条规则：**在源码和 CSS 分析基础上，新增布局密度、长列表控制、Emoji/视觉语言一致性、主要操作清晰度和冗余任务流程检查。
+- **扩展为 27 条规则：**覆盖信息架构、导航、系统反馈、表单、认知负荷、一致性、边缘状态、基础可用性和性能。
+- **以 Nielsen 十项原则为基础：**先使用通用可用性原则，再结合产品类型和 Persona 调整判断重点。
 - **三级证据约束：**每条结论标记为 `static`、`rendered` 或 `interactive`。视觉问题必须附真实截图/DOM 引用，流程问题必须附 Persona 实际任务步骤。
 - **按产品类型调整重点：**电商、企业软件、金融、医疗、内容产品、开发者工具、内部工具和消费产品分别使用不同的体验要求。
 - **中英文输出：**报告、卡片操作、判定摘要和 AI 任务 Prompt 支持中英文；英文环境也能识别 `item 2`、`below level three` 等判定表达。
@@ -78,7 +79,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 |---|---|---|
 | Persona 初始化 | `/ux init` | 模型从 README / package.json / 路由结构生成 1-3 个画像草稿，**经用户确认后**写入 `.ux/personas.yml`；文件已存在时直接加载，不重复询问 |
 | Persona 上下文注入 | 自动 | 每次请求按当前项目注入生效画像与走查协议（对齐 AGENTS.md section provider 模式） |
-| 源码与 CSS 走查 | `/ux scan` | 先确定范围，再逐 persona 独立走查、合并成一份报告；14 条规则，模型判断为主、AST/CSS 求证为辅 |
+| 源码与 CSS 走查 | `/ux scan` | 先确定范围，再逐 persona 独立走查、合并成一份报告；以 Nielsen 原则为基础的 27 条规则，模型判断为主、AST/CSS 求证为辅 |
 | 按产品类型调整重点 | 自动 | 从项目文档和本次业务流程判断 `consumer`、`enterprise`、`ecommerce`、`content`、`finance`、`healthcare`、`developer-tool`、`internal-tool` 或 `other`，使用对应的体验要求 |
 | 三级证据 | 自动 | 源码/CSS 为 `static`，真实截图/DOM/尺寸为 `rendered`，记录 Persona 任务步骤后为 `interactive`；缺少浏览器能力时自动降级 |
 | 输出语言 | 自动 / 配置 | 显式配置 `outputLanguage` 时优先使用；`auto` 模式下先跟随当前用户语言，再回退到项目主 README。报告卡片和 AI 任务 Prompt 支持中英文 |
@@ -112,7 +113,11 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 指标计算时两种 confirmed 合并计入有效问题，`stale` **不计入分母**——必须区分「扫了没发现」与「根本没扫」，否则"删代码"会被误判成"改进"。
 
-### 14 条规则
+### 高频问题优先顺序
+
+走查按常见程度优先检查：① 反馈与系统状态；② 表单与流程恢复；③ 信息架构、导航和主要操作；④ 认知负荷、一致性、边缘状态、基础可用性与性能。检查顺序用于提高发现效率，最终报告仍按实际严重度排序。
+
+### 27 条规则
 
 | ID | 规则 | 验证路径 |
 |---|---|---|
@@ -130,6 +135,19 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 | R-12 | Emoji/装饰元素与视觉语言不一致 | 源码/CSS 候选 + **必须有 rendered 证据** |
 | R-13 | 页面用途或主要操作不清 | 源码候选 + **必须有 rendered 证据** |
 | R-14 | 关键任务存在冗余交互 | **必须有 interactive Persona 任务记录** |
+| R-15 | 功能分类不符合用户任务 | **必须有 interactive 功能寻找记录** |
+| R-16 | 导航层级过深或缺少位置感 | **必须有 interactive 导航记录** |
+| R-17 | 长时间操作缺少进度反馈 | model+ast；static 证据 |
+| R-18 | 表单字段或必填项过多 | 源码候选 + **必须有 rendered 证据** |
+| R-19 | 表单校验反馈过晚 | **必须有 interactive 表单任务记录** |
+| R-20 | 中途退出会丢失表单进度 | **必须有 interactive 离开/恢复记录** |
+| R-21 | 缺少退出、取消或撤销路径 | **必须有 interactive 任务记录** |
+| R-22 | 选项过多且缺少默认值或推荐 | 源码候选 + **必须有 rendered 证据** |
+| R-23 | 同一操作跨页面不一致 | **必须有 rendered 跨页面证据** |
+| R-24 | 相似组件的行为不一致 | **必须有 interactive 对比记录** |
+| R-25 | 首次使用、离线或无权限状态缺失 | model+ast；static 范围证据 |
+| R-26 | 对比度、字号或触控热区影响使用 | **必须有 rendered 测量证据** |
+| R-27 | 响应速度影响关键任务 | **必须有 interactive 计时证据** |
 
 严重度由矩阵推导：`impact`（是否阻断关键任务，模型给出）× `reach`（受影响用户占目标用户比例，由命中画像的 `share` 之和推导，≥0.5 为 wide）→ 一级 / 二级 / 三级 / 四级问题（内部仍是 P0~P3，但不上界面）。
 
