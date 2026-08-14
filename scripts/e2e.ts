@@ -9,6 +9,8 @@
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createElement, type ComponentType } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { apply } from '../src/index'
 import { writePersonas } from '../src/persona'
@@ -17,6 +19,7 @@ import { registerAutoScan } from '../src/auto-scan'
 import { HISTORY_FILE } from '../src/history'
 import { currentReport, resolveSelector } from '../src/judge-tool'
 import { uxReportDefinition, normalizeFinding } from '../src/client/index'
+import { UxReportNodeView } from '../src/client/report-view'
 import type { CommandInvocation } from '@deepseek-ai/dsh-commands'
 import { deliveryPrompt, type UxFinding } from '../src/types'
 
@@ -496,6 +499,25 @@ async function remove(id: string) {
       f.deliveryPrompt.includes('观察到的现象：')
       && f.deliveryPrompt.includes('不代表完整项目上下文')
       && !f.deliveryPrompt.includes('suggestion:')))
+    const renderCard = (status: string): string => renderToStaticMarkup(createElement(
+      UxReportNodeView as ComponentType<Record<string, unknown>>,
+      {
+        node: {
+          data: {
+            ...viewData,
+            findings: viewData.findings.map((finding, index) =>
+              index === 0 ? { ...finding, status } : finding),
+          },
+        },
+        judge: async () => null,
+      },
+    ))
+    check('未确认的问题不显示 AI 任务 Prompt 按钮',
+      !renderCard('pending').includes('复制给 AI 的任务 Prompt'))
+    check('用户显式确认后显示 AI 任务 Prompt 按钮',
+      renderCard('confirmed_explicit').includes('复制给 AI 的任务 Prompt'))
+    check('隐式确认代表已经改掉，不再显示修复 Prompt 按钮',
+      !renderCard('confirmed_implicit').includes('复制给 AI 的任务 Prompt'))
     check('卡片带模式，review 才渲染批量条', viewData.mode === 'review')
   } else {
     check('存在 start/update 事件配对', false, JSON.stringify(reportEvents.map((e) => e.type)))
