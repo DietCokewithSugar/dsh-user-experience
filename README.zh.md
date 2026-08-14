@@ -188,6 +188,18 @@ autoScan:
 >
 > 如果不想授予构建权限，也可以从 npm 安装预构建产物：`dsh plugin add dsh-user-experience`。
 
+### 与其他插件共存
+
+Harness、Cordis 和 React 都是**由宿主 profile 提供的 peer dependency**。本包不会在 profile 中安装或打包私有的 `@deepseek-ai/dsh-tools`、`@deepseek-ai/cordis`、其他 DSH 服务包或 React 副本，因此不同插件会解析到 profile 共享的服务定义与 Symbol 身份。
+
+- 不设置 `overrides`、`packageExtensions`，不重写 profile 依赖
+- 不修改 Node.js 或 React 版本
+- GitHub 安装时的 `prepare` 只构建本包，不执行 `pnpm/npm install`、`add`、`update` 或 `upgrade`
+- DSH 使用兼容 peer 范围，不会把本仓库的开发版本强行装入 profile
+- CI 会把打包产物安装到临时 profile，逐项验证插件与 profile 解析到的 Harness、Cordis 和 React 真实路径完全相同
+
+这些约束可以防止**本插件**制造重复运行时。如果另一个插件仍把 DSH 包放在直接依赖中，它依然可能引入自己的冲突副本，也应采用相同的 peer dependency 约定。
+
 安装完成后，插件行（id `ux-experience`）进入配置层；重启 `dsh` 或重新加载 profile 生效。可用配置项（在 profile 的 `cordis.patch.yml` 或 `--patch` 层按 id 覆盖）：
 
 ```yaml
@@ -235,9 +247,10 @@ autoScan:
 pnpm install
 pnpm run build     # tsdown（node half + client bundle）+ tsc（类型声明）
 pnpm test          # 冒烟测试（AST/CSS / 证据等级 / 语言适配 / persona / 模式 / 账本 / 全链路）
+pnpm run test:singleton  # 打包到临时 profile，验证共享运行时身份
 ```
 
-- **版本锁定**：DSH 处于 developer preview，接口会变。本仓库依赖锁定在 `@deepseek-ai/dsh-*@0.1.0-rc.6`（`@deepseek-ai/cordis@4.0.1`）；升级框架前先在本地跑通。
+- **兼容性基线**：本地构建与测试使用 `@deepseek-ai/dsh-*@0.1.0-rc.6` 和 `@deepseek-ai/cordis@4.0.1`；运行时框架包由 profile 通过 peer 提供（DSH 范围为 `>=0.1.0-rc.6 <0.2.0`）。
 - 结构：`src/index.ts` 为 Host 插件（命令 + 提示词注入 + 四个模型工具 + 改动触发的自动走查）；`src/client/` 为 Web 客户端插件（报告卡片，经 `dsh.client` 声明被模块表发现）；一个 bundle 行（`cordis.patch.yml`）同时挂载两者。
 - 红线：不修改 agent-loop——所有能力挂在文档化扩展点（`ctx.commands` / `ctx.systemPrompt.section()` / `ctx.tools.register()` / `SessionEventMap` / `tools/result` / `agent/turn-stopping`）上。自动走查用的正是框架里 `/loop` 的原生形态：监听器在回合收尾时 `agent.steer()`，机器重读 inbox 再跑一步。
 

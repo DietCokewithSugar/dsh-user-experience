@@ -188,6 +188,18 @@ autoScan:
 >
 > If you'd rather not grant build permission, install the prebuilt artifact from npm: `dsh plugin add dsh-user-experience`.
 
+### Coexisting with other plugins
+
+Harness, Cordis, and React are **host-owned peer dependencies**. This package does not install or bundle private copies of `@deepseek-ai/dsh-tools`, `@deepseek-ai/cordis`, other DSH service packages, or React into a profile. All plugins therefore resolve the profile's shared service definitions and Symbol identities.
+
+- No `overrides`, `packageExtensions`, or profile dependency rewrites
+- No Node.js or React version changes
+- The GitHub `prepare` script only builds this package; it does not run `pnpm/npm install`, `add`, `update`, or `upgrade`
+- Compatible DSH release candidates are accepted through peer ranges instead of forcing this plugin's development version into the profile
+- CI installs a packed copy into a temporary profile and verifies that the profile and plugin resolve identical real paths for Harness, Cordis, and React packages
+
+This prevents **this plugin** from creating the duplicate-runtime condition. A different plugin that ships DSH packages as direct dependencies can still introduce its own conflicting copy and should adopt the same peer-dependency contract.
+
 After installation, the plugin row (id `ux-experience`) enters the configuration layer; restart `dsh` or reload the profile to take effect. Available config options (overridden by id in the profile's `cordis.patch.yml` or the `--patch` layer):
 
 ```yaml
@@ -235,9 +247,10 @@ After editing front-end code—including CSS—you need do nothing at all: the s
 pnpm install
 pnpm run build     # tsdown (host half + client bundle) + tsc (type declarations)
 pnpm test          # smoke tests (AST/CSS / evidence levels / localization / persona / modes / ledger / end-to-end)
+pnpm run test:singleton  # pack into a temporary profile and verify shared runtime identities
 ```
 
-- **Version pinning**: DSH is in developer preview and its interfaces change. This repo pins `@deepseek-ai/dsh-*@0.1.0-rc.6` (`@deepseek-ai/cordis@4.0.1`); verify locally before upgrading the framework.
+- **Compatibility baseline**: local build/tests use `@deepseek-ai/dsh-*@0.1.0-rc.6` and `@deepseek-ai/cordis@4.0.1`; runtime framework packages are peers resolved from the profile (`>=0.1.0-rc.6 <0.2.0` for DSH).
 - Structure: `src/index.ts` is the Host plugin (commands + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.
 - Red line: the agent loop is untouched — all capabilities hang on documented extension points (`ctx.commands` / `ctx.systemPrompt.section()` / `ctx.tools.register()` / `SessionEventMap` / `tools/result` / `agent/turn-stopping`). The automatic walkthrough uses the framework's own `/loop` shape: a listener calls `agent.steer()` at the turn's stop boundary and the machine re-reads its inbox for one more step.
 
