@@ -36,6 +36,22 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 ![确认 UX 问题后出现复制给 AI 的任务 Prompt 按钮](docs/images/ux-confirmed-prompt.png)
 
+## 本次更新：视觉证据、产品类型与语言适配
+
+- **扩展为 14 条规则：**在源码和 CSS 分析基础上，新增布局密度、长列表控制、Emoji/视觉语言一致性、主要操作清晰度和冗余任务流程检查。
+- **三级证据约束：**每条结论标记为 `static`、`rendered` 或 `interactive`。视觉问题必须附真实截图/DOM 引用，流程问题必须附 Persona 实际任务步骤。
+- **按产品类型调整重点：**电商、企业软件、金融、医疗、内容产品、开发者工具、内部工具和消费产品分别使用不同的体验要求。
+- **中英文输出：**报告、卡片操作、判定摘要和 AI 任务 Prompt 支持中英文；英文环境也能识别 `item 2`、`below level three` 等判定表达。
+- **可靠降级：**项目无法运行或浏览器工具不可用时，只输出 `static` 结论，不会把视觉猜测描述成已经观察到的事实。
+
+多级证据会显示在技术细节中，视觉与交互结论都能追溯到对应截图、DOM 测量或任务步骤：
+
+![包含 rendered 与 static 证据等级的 UX 报告](docs/images/ux-multi-evidence.png)
+
+报告卡片和确认流程可以跟随开发者使用的语言（下图为示例数据）：
+
+![包含 interactive 证据的英文 UX 报告卡片](docs/images/ux-english-report.png)
+
 ---
 
 ## 能力边界（明确不做）

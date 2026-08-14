@@ -36,6 +36,22 @@ Once you confirm that a finding is real, the card provides a task Prompt you can
 
 ![Confirmed UX finding with a copy-to-AI Prompt action](docs/images/ux-confirmed-prompt.png)
 
+## What’s new: visual evidence, product context, and localization
+
+- **14-rule walkthrough:** source and CSS analysis now adds layout density, long-list handling, Emoji/visual-language consistency, primary-action clarity, and redundant task-flow checks.
+- **Evidence gates:** every finding is labeled `static`, `rendered`, or `interactive`. Visual findings need real screenshot/DOM references; flow findings need recorded Persona task steps.
+- **Product-aware priorities:** ecommerce, enterprise, finance, healthcare, content, developer tools, internal tools, and consumer products are reviewed against different UX needs.
+- **Localized output:** reports, card actions, verdict summaries, and AI task Prompts support Chinese and English. English selectors such as `item 2` and `below level three` are also understood.
+- **Honest fallback:** if the app or browser tools are unavailable, the walkthrough stays at `static` instead of presenting visual guesses as observed facts.
+
+Multi-level evidence appears in the technical details so every visual or interaction conclusion can be reviewed:
+
+![UX report with rendered and static evidence levels](docs/images/ux-multi-evidence.png)
+
+The report card and confirmation workflow can use the developer’s language (interface preview with sample data):
+
+![English UX report card with interactive evidence](docs/images/ux-english-report.png)
+
 ---
 
 ## Scope (explicitly out of scope)
