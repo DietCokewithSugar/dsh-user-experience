@@ -6,6 +6,8 @@
 >
 > Scope: React + TypeScript / React + JavaScript / Vue 3, CSS/layout analysis, and optional browser evidence when the current Harness session can open the application.
 
+🎉 Listed in [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin).
+
 Existing automated checks (axe, Lighthouse) can only verify absolute rules — contrast ratio, missing alt text. But UX issues are inherently **relative**: a confirmation dialog before deleting protects an occasional user but wastes the time of an operator who processes hundreds of records a day. Without knowing *who it's for*, a "UX issue" cannot be defined.
 
 This plugin makes **target user personas** a prerequisite for the walkthrough: every finding is anchored to an explicit persona, and no persona means no conclusions. By having AI walk through the product as those users, it surfaces experience problems **during development** and gives concrete, locatable, reviewable optimization suggestions—not post-launch user feedback.
@@ -26,7 +28,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 Restart DSH or reload the `web` profile after installation. GitHub plugins execute build scripts during installation; read the [security note](#installation) before installing, and pin a trusted commit for production use.
 
-## After installation
+## Screenshots
 
 The walkthrough report explains the observed behavior and user impact in plain language:
 
@@ -35,15 +37,6 @@ The walkthrough report explains the observed behavior and user impact in plain l
 Once you confirm that a finding is real, the card provides a task Prompt you can copy to another AI. It describes the observed phenomenon rather than prescribing code changes, tells the AI to inspect the complete project context, and explicitly allows copy changes:
 
 ![Confirmed UX finding with a copy-to-AI Prompt action](docs/images/ux-confirmed-prompt.png)
-
-## What’s new: visual evidence, product context, and localization
-
-- **27-rule walkthrough:** the checklist now covers information architecture, navigation, system feedback, forms, cognitive load, consistency, edge states, basic usability, and performance.
-- **Nielsen-based foundation:** Nielsen’s ten usability heuristics provide the shared baseline, then product type and Persona context adjust priorities.
-- **Evidence gates:** every finding is labeled `static`, `rendered`, or `interactive`. Visual findings need real screenshot/DOM references; flow findings need recorded Persona task steps.
-- **Product-aware priorities:** ecommerce, enterprise, finance, healthcare, content, developer tools, internal tools, and consumer products are reviewed against different UX needs.
-- **Localized output:** reports, card actions, verdict summaries, and AI task Prompts support Chinese and English. English selectors such as `item 2` and `below level three` are also understood.
-- **Honest fallback:** if the app or browser tools are unavailable, the walkthrough stays at `static` instead of presenting visual guesses as observed facts.
 
 Multi-level evidence appears in the technical details so every visual or interaction conclusion can be reviewed:
 
@@ -55,7 +48,7 @@ The report card and confirmation workflow can use the developer’s language (in
 
 ---
 
-## Scope (explicitly out of scope)
+## Supported inputs and evidence
 
 | Supported | Parsing engine |
 |---|---|
@@ -66,7 +59,7 @@ The report card and confirmation workflow can use the developer’s language (in
 | Rendered page (optional) | When browser/screenshot tools and a runnable app are available, the agent inspects relevant routes and viewports |
 | Persona task simulation (optional) | When the task can be executed in a browser, the agent records the steps and evaluates flow redundancy |
 
-**Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See [`dsh-user-experience-v0.3-spec.md`](dsh-user-experience-v0.3-spec.md) for evidence/product/language behavior, [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md) for stack details, and [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md) for the form revision.
+**Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See the [current implementation specification](dsh-user-experience-v0.3-spec.md) for evidence, product-type, and language behavior.
 
 - Every finding is marked **`static`**, **`rendered`**, or **`interactive`**. Browser capability is optional: without it the walkthrough continues with static evidence and never pretends to have seen the page
 - Layout-density, visual-language, and primary-action findings require rendered evidence; redundant-flow findings require an interactive persona walkthrough
@@ -157,7 +150,7 @@ Severity is derived from a matrix: `impact` (does it block the persona's critica
 |---|---|---|
 | `.ux/personas.yml` | ✅ committed | Project-level consensus, team-shared; CI mode depends on it |
 | `.ux/glossary.yml` | ✅ committed | Glossary and verdicts; high reuse value |
-| `.ux/rules.local.yml` | ❌ gitignored | Personal walkthrough preferences, not imposed on the team. This version reads `mode` and `autoScan`; other keys are tolerated and ignored |
+| `.ux/rules.local.yml` | ❌ gitignored | Personal walkthrough preferences, not imposed on the team. Supported keys are `mode` and `autoScan`; other keys are tolerated and ignored |
 | `.ux/history.jsonl` | ❌ gitignored | Fingerprint ledger: fingerprint, first/last seen, terminal state, and each round's scope. This is **long-term metric data**, not verdicts |
 
 Recommended addition to the project's `.gitignore`:
@@ -247,17 +240,6 @@ pnpm test          # smoke tests (AST/CSS / evidence levels / localization / per
 - **Version pinning**: DSH is in developer preview and its interfaces change. This repo pins `@deepseek-ai/dsh-*@0.1.0-rc.6` (`@deepseek-ai/cordis@4.0.1`); verify locally before upgrading the framework.
 - Structure: `src/index.ts` is the Host plugin (commands + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.
 - Red line: the agent loop is untouched — all capabilities hang on documented extension points (`ctx.commands` / `ctx.systemPrompt.section()` / `ctx.tools.register()` / `SessionEventMap` / `tools/result` / `agent/turn-stopping`). The automatic walkthrough uses the framework's own `/loop` shape: a listener calls `agent.steer()` at the turn's stop boundary and the machine re-reads its inbox for one more step.
-
-## Publish checklist
-
-- [x] README security note (see Installation above)
-- [x] README declares the evidence boundary (static fallback; rendered/interactive only with real browser evidence)
-- [x] v0.2 stack-extension spec (`dsh-user-experience-v0.2-spec.md`)
-- [x] v0.1.1 form-revision spec (`dsh-user-experience-v0.1.1-spec.md`)
-- [x] Pinned DSH dependency versions (developer preview)
-- [x] Repo has the **`dsh-plugin`** topic (official discovery mechanism)
-- [x] PR to [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin), one line each in the English and Chinese READMEs (auto-synced to the site after merge) — [PR #63 merged](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63), [copy update PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)
-- [ ] Join the official Discord community (manual step; see the official docs/repo for the invite link)
 
 ## License
 

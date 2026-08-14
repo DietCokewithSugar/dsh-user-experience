@@ -6,6 +6,8 @@
 >
 > 能力边界：支持 React + TypeScript / React + JavaScript / Vue 3、CSS/布局分析；当前 Harness 会话能够打开项目时，可进一步获取浏览器证据。
 
+🎉 已收录至 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)。
+
 现有自动化检查（axe、Lighthouse）只能校验绝对规则——对比度够不够、有没有 alt。但体验问题的本质是**相对的**：删除前的二次确认，对偶尔操作的用户是保护，对每天处理上百条记录的操作员是损耗。脱离了"给谁用"，"体验问题"无法定义。
 
 本插件把**目标用户画像（Persona）**作为走查的前置输入：所有问题判定都挂靠到明确画像上，无 persona 不出结论。AI 会以这些目标用户的视角模拟使用过程，在**开发阶段**提前发现体验问题，并给出具体、可定位、可复核的优化建议，而不是等上线后再收集用户反馈。
@@ -26,7 +28,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 安装完成后，重启 DSH 或重新加载 `web` profile。GitHub 插件会在安装阶段执行构建脚本；安装前请阅读下方[安全提示](#安装)，生产环境建议锁定可信 commit。
 
-## 安装后效果
+## 界面预览
 
 走查报告先用简单清晰的语言说明观察到的现象及其对用户的影响：
 
@@ -35,15 +37,6 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 确认问题属实后，卡片会提供一份可复制给其他 AI 的任务 Prompt。它只描述观察到的现象，不预设代码改法；同时提醒 AI 先阅读完整项目上下文，并明确允许修改界面文案：
 
 ![确认 UX 问题后出现复制给 AI 的任务 Prompt 按钮](docs/images/ux-confirmed-prompt.png)
-
-## 本次更新：视觉证据、产品类型与语言适配
-
-- **扩展为 27 条规则：**覆盖信息架构、导航、系统反馈、表单、认知负荷、一致性、边缘状态、基础可用性和性能。
-- **以 Nielsen 十项原则为基础：**先使用通用可用性原则，再结合产品类型和 Persona 调整判断重点。
-- **三级证据约束：**每条结论标记为 `static`、`rendered` 或 `interactive`。视觉问题必须附真实截图/DOM 引用，流程问题必须附 Persona 实际任务步骤。
-- **按产品类型调整重点：**电商、企业软件、金融、医疗、内容产品、开发者工具、内部工具和消费产品分别使用不同的体验要求。
-- **中英文输出：**报告、卡片操作、判定摘要和 AI 任务 Prompt 支持中英文；英文环境也能识别 `item 2`、`below level three` 等判定表达。
-- **可靠降级：**项目无法运行或浏览器工具不可用时，只输出 `static` 结论，不会把视觉猜测描述成已经观察到的事实。
 
 多级证据会显示在技术细节中，视觉与交互结论都能追溯到对应截图、DOM 测量或任务步骤：
 
@@ -55,7 +48,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 ---
 
-## 能力边界（明确不做）
+## 支持的输入与证据
 
 | 支持 | 解析引擎 |
 |---|---|
@@ -66,7 +59,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 | 真实页面（可选） | 当前会话有浏览器/截图工具且项目可运行时，检查相关路由和视口 |
 | Persona 任务模拟（可选） | 可以在浏览器中执行关键任务时，记录操作步骤并评估流程冗余 |
 
-**明确不支持（检出时如实告知，不给低质量猜测）**：Svelte、Vue 2（SFC 语法与 @vue/compiler-sfc 不兼容）、小程序（.wxml）等。证据等级、产品类型与语言策略见 [`dsh-user-experience-v0.3-spec.md`](dsh-user-experience-v0.3-spec.md)，技术栈扩展细节见 [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md)，形态修订见 [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md)。
+**明确不支持（检出时如实告知，不给低质量猜测）**：Svelte、Vue 2（SFC 语法与 @vue/compiler-sfc 不兼容）、小程序（.wxml）等。证据等级、产品类型与语言策略见[当前实现规格](dsh-user-experience-v0.3-spec.md)。
 
 - 每条结论标记为 **`static`、`rendered` 或 `interactive`**。浏览器能力是可选项：不可用时继续静态走查，不会假装看过页面
 - 布局密度、视觉语言和主要操作层级问题至少需要 rendered 证据；流程冗余问题至少需要 interactive 任务记录
@@ -157,7 +150,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 |---|---|---|
 | `.ux/personas.yml` | ✅ 提交 | 项目级共识，团队共享；CI 模式依赖它 |
 | `.ux/glossary.yml` | ✅ 提交 | 术语表与判定，复用价值高 |
-| `.ux/rules.local.yml` | ❌ gitignore | 个人走查偏好，不强加给团队。本版认识 `mode` 与 `autoScan`，其余键宽容忽略 |
+| `.ux/rules.local.yml` | ❌ gitignore | 个人走查偏好，不强加给团队。支持 `mode` 与 `autoScan`，其余键宽容忽略 |
 | `.ux/history.jsonl` | ❌ gitignore | 指纹历史账本：指纹、首次/末次出现、终态、每次走查的 scope。这是**长期指标数据**，不是判定结果 |
 
 建议在项目 `.gitignore` 中加入：
@@ -247,17 +240,6 @@ pnpm test          # 冒烟测试（AST/CSS / 证据等级 / 语言适配 / pers
 - **版本锁定**：DSH 处于 developer preview，接口会变。本仓库依赖锁定在 `@deepseek-ai/dsh-*@0.1.0-rc.6`（`@deepseek-ai/cordis@4.0.1`）；升级框架前先在本地跑通。
 - 结构：`src/index.ts` 为 Host 插件（命令 + 提示词注入 + 四个模型工具 + 改动触发的自动走查）；`src/client/` 为 Web 客户端插件（报告卡片，经 `dsh.client` 声明被模块表发现）；一个 bundle 行（`cordis.patch.yml`）同时挂载两者。
 - 红线：不修改 agent-loop——所有能力挂在文档化扩展点（`ctx.commands` / `ctx.systemPrompt.section()` / `ctx.tools.register()` / `SessionEventMap` / `tools/result` / `agent/turn-stopping`）上。自动走查用的正是框架里 `/loop` 的原生形态：监听器在回合收尾时 `agent.steer()`，机器重读 inbox 再跑一步。
-
-## 发布检查项
-
-- [x] README 安全提示（见上方「安装」）
-- [x] README 声明证据边界（默认 static；只有真实浏览器证据才能升级 rendered/interactive）
-- [x] v0.2 技术栈扩展说明文档（`dsh-user-experience-v0.2-spec.md`）
-- [x] v0.1.1 形态修订说明文档（`dsh-user-experience-v0.1.1-spec.md`）
-- [x] 锁定 DSH 依赖版本（developer preview）
-- [x] 仓库添加 **`dsh-plugin`** topic（官方发现机制）
-- [x] 向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，中英文 README 各加一行（站点合并后自动同步）——[PR #63 已合并](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63)，[文案更新 PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)
-- [ ] 加入官方 Discord 社区（人工操作，见官方文档/仓库的邀请链接）
 
 ## License
 
