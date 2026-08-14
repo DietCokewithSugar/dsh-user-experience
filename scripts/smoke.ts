@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/smoke.ts
  *
- * 覆盖：AST 候选引擎（9 条规则的代表性信号）、persona 文件读写往返、
+ * 覆盖：AST/CSS 候选引擎（14 条规则的代表性信号）、persona 文件读写往返、
  * glossary 增量合并、技术栈探测、严重度矩阵、插件 apply 注册接线。
  */
 
@@ -13,15 +13,18 @@ import { join } from 'node:path'
 import ts from 'typescript'
 import { extractCandidates } from '../src/ast'
 import { buildAutoScanPrompt, isReviewableChange, relativizeChange, scanUnitsOf } from '../src/auto-scan'
+import { extractCssCandidates } from '../src/css'
 import { extractVueCandidates } from '../src/vue'
 import { featureDigestOf, fingerprintOf, isSameFinding, symbolPathOf } from '../src/fingerprint'
 import { mergeGlossary, loadGlossary } from '../src/glossary'
 import { comparableOf, HISTORY_FILE, metricsOf, recordScan, reconcile } from '../src/history'
 import { codeSpeakReason } from '../src/human-copy'
+import { detectProjectLanguage, normalizeLanguage, resolveOutputLanguage } from '../src/i18n'
 import { loadLocalRules } from '../src/local-rules'
 import { extractModeFlag, modeInstruction, resolveMode } from '../src/mode'
 import { writePersonas, loadPersonas } from '../src/persona'
 import { detectStack, gatherFiles } from '../src/project'
+import { productReviewFocus } from '../src/product'
 import {
   collectSurfaceHints, createSurfaceIndex, looksLikeFilePath, sanitizeSurface, surfaceCandidatesFor,
 } from '../src/surface'
@@ -42,6 +45,7 @@ const TEST_CONFIG = {
   autoScanEditTools: ['write', 'edit'],
   autoScanMaxFiles: 20,
   autoScanDebounceTurns: 1,
+  outputLanguage: 'auto' as const,
 }
 
 let failures = 0
@@ -116,6 +120,7 @@ check('R-06 await 无 catch 命中（handleSubmit）', candidates.some((c) => c.
 check('R-06 catch 无用户可见反馈命中（load）', candidates.some((c) => c.rule === 'R-06' && c.note.includes('catch 内未发现用户可见反馈')))
 check('R-07 异步提交按钮无 disabled 命中', candidates.some((c) => c.rule === 'R-07' && c.snippet.includes('提交')))
 check('R-08 直接渲染 item.name 命中', candidates.some((c) => c.rule === 'R-08' && c.snippet.includes('item.name')))
+check('R-11 列表缺少分页/虚拟化候选', candidates.some((c) => c.rule === 'R-11'))
 check('R-03 泛化确认文案命中（确定）', candidates.some((c) => c.rule === 'R-03' && c.note.includes('确定')))
 check('R-02 术语候选提取（账户/帐号）', candidates.filter((c) => c.rule === 'R-02').some((c) => c.snippet.includes('账户') || c.snippet.includes('帐号')), candidates.filter((c) => c.rule === 'R-02').map((c) => c.snippet).join('|'))
 check('R-05 有 loading 无 empty 的样本不误报（本样本有空态）', !candidates.some((c) => c.rule === 'R-05'), candidates.filter((c) => c.rule === 'R-05').map((c) => c.note).join('|'))
@@ -135,6 +140,35 @@ export function List() {
 `
 const r05 = extractCandidates('src/List.tsx', SAMPLE_R05, { maxPerRule: 5, maxPerFile: 30 })
 check('R-05 有 loading 无 empty 命中', r05.some((c) => c.rule === 'R-05'), JSON.stringify(r05.map((c) => c.rule)))
+const emojiCandidates = extractCandidates(
+  'src/Welcome.tsx',
+  'export function Welcome() { return <button>✨ 开始</button> }',
+  { maxPerRule: 5, maxPerFile: 30 },
+)
+check('R-12 用户可见 Emoji 候选', emojiCandidates.some((candidate) => candidate.rule === 'R-12'))
+
+const CSS_SAMPLE = `
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  margin-top: 3px;
+  margin-right: 5px;
+  margin-bottom: 7px;
+  margin-left: 9px;
+  row-gap: 11px;
+  column-gap: 13px;
+  padding-top: 15px;
+}
+.status::before { content: "✨"; }
+`
+const cssCandidates = extractCssCandidates(
+  'src/styles/page.css', CSS_SAMPLE, { maxPerRule: 5, maxPerFile: 30 },
+)
+check('CSS 紧凑布局产生待截图确认的 R-10 候选',
+  cssCandidates.some((candidate) => candidate.rule === 'R-10'))
+check('CSS Emoji 产生待截图确认的 R-12 候选',
+  cssCandidates.some((candidate) => candidate.rule === 'R-12'))
 
 // ── 2. persona 文件读写 ────────────────────────────────────────────────────────
 console.log('persona 读写')
@@ -166,6 +200,14 @@ try {
   check('writePersonas 落盘条数', written.length === 2)
   const loaded = loadPersonas(root)
   check('loadPersonas 往返一致', loaded !== undefined && loaded.length === 2 && loaded[0]?.id === 'novice-investor')
+  check('请求语言优先于项目语言',
+    normalizeLanguage('English') === 'en'
+    && resolveOutputLanguage(root, 'auto', 'zh-CN') === 'zh-CN')
+  writeFileSync(join(root, 'README.md'), '# 产品说明\n这是一个面向运营人员的订单管理工具。\n')
+  check('可从项目主 README 推断中文输出', detectProjectLanguage(root) === 'zh-CN')
+  check('不同产品类型使用不同走查重点',
+    productReviewFocus('ecommerce', 'zh-CN').join('|')
+      !== productReviewFocus('internal-tool', 'zh-CN').join('|'))
 
   // ── 3. 严重度矩阵 ──────────────────────────────────────────────────────────
   console.log('严重度矩阵')
@@ -274,7 +316,9 @@ function confirmRemove() {
   const fileLines = VUE_SFC.split('\n').length
   const lineOfText = (text: string): number => VUE_SFC.split('\n').findIndex((line) => line.includes(text)) + 1
   const rulesHit = [...vueByRule.keys()].sort()
-  check('Vue SFC 覆盖全部 9 条规则', JSON.stringify(rulesHit) === JSON.stringify(['R-01', 'R-02', 'R-03', 'R-04', 'R-05', 'R-06', 'R-07', 'R-08', 'R-09']), JSON.stringify(rulesHit))
+  check('Vue SFC 保持原 9 条规则覆盖并新增长列表候选',
+    ['R-01', 'R-02', 'R-03', 'R-04', 'R-05', 'R-06', 'R-07', 'R-08', 'R-09', 'R-11']
+      .every((rule) => rulesHit.includes(rule)), JSON.stringify(rulesHit))
   check('R-09 全部 verified_by=ast（class/:class/:style）', vueCandidates.filter((c) => c.rule === 'R-09').length >= 3 && vueCandidates.filter((c) => c.rule === 'R-09').every((c) => c.verified_by === 'ast'), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-09')))
   check('R-04 确认上下文内的删除按钮不误报（a-popconfirm 包裹）', !vueCandidates.some((c) => c.rule === 'R-04' && c.snippet.includes('removeItem')), vueCandidates.filter((c) => c.rule === 'R-04').map((c) => c.snippet).join('|'))
   check('R-04 无确认的清空按钮命中', vueCandidates.some((c) => c.rule === 'R-04' && c.snippet.includes('clearAll')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-04')))
@@ -294,9 +338,13 @@ function confirmRemove() {
 
   // ── 6. 规则目录完整性 ────────────────────────────────────────────────────────
   console.log('规则目录')
-  check('9 条规则齐全', RULES.length === 9)
+  check('14 条规则齐全', RULES.length === 14)
   check('R-09 为快车道规则', RULES.find((r) => r.id === 'R-09')?.fastLane === true)
   check('R-02 为条件触发规则', RULES.find((r) => r.id === 'R-02')?.conditional === true)
+  check('视觉规则要求 rendered 证据',
+    ['R-10', 'R-12', 'R-13'].every((id) => RULES.find((r) => r.id === id)?.minimumEvidence === 'rendered'))
+  check('流程冗余规则要求 interactive 证据',
+    RULES.find((r) => r.id === 'R-14')?.minimumEvidence === 'interactive')
 
   // ── 7. apply 注册接线（stub 服务）───────────────────────────────────────────
   console.log('apply 接线')
@@ -450,6 +498,7 @@ export function UserTable() {
         category: 'state-coverage',
         verified_by: 'model',
         evidence_level: 'static',
+        evidence_refs: [],
         persona_refs: ['investor'],
         severity: { impact: 'high', impact_confidence: 'medium', reach: 'wide', level: 'P0' },
         rationale: '依据',
@@ -525,7 +574,7 @@ export function UserTable() {
   check('纯后端改动排除', !isReviewableChange('server/api/orders.ts'))
   check('测试文件排除', !isReviewableChange('src/pages/UserTable.test.tsx'))
   check('配置文件排除', !isReviewableChange('vite.config.ts'))
-  check('样式文件排除（本版规则不覆盖）', !isReviewableChange('src/styles/main.css'))
+  check('样式文件改动纳入布局走查', isReviewableChange('src/styles/main.css'))
   check('绝对路径归一为相对路径',
     relativizeChange('/repo/src/a.tsx', '/repo') === 'src/a.tsx')
   check('项目外路径被拒', relativizeChange('/other/a.tsx', '/repo') === undefined)

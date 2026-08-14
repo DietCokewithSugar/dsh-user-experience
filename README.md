@@ -4,7 +4,7 @@
 
 > A UX walkthrough plugin for DeepSeek Harness (DSH): **AI simulates target users to uncover UX problems during development—before they reach production—and provides concrete optimization suggestions.**
 >
-> Scope: React + TypeScript / React + JavaScript / Vue 3 supported, static evidence only, no visual issues.
+> Scope: React + TypeScript / React + JavaScript / Vue 3, CSS/layout analysis, and optional browser evidence when the current Harness session can open the application.
 
 Existing automated checks (axe, Lighthouse) can only verify absolute rules — contrast ratio, missing alt text. But UX issues are inherently **relative**: a confirmation dialog before deleting protects an occasional user but wastes the time of an operator who processes hundreds of records a day. Without knowing *who it's for*, a "UX issue" cannot be defined.
 
@@ -45,12 +45,16 @@ Once you confirm that a finding is real, the card provides a task Prompt you can
 | React + TypeScript (.ts / .tsx) | TypeScript compiler API (TSX) |
 | React + JavaScript (.js / .jsx) | Same engine; .js may contain JSX, always parsed as TSX |
 | Vue 3 (.vue SFC) | `@vue/compiler-sfc` block splitting + `@vue/compiler-dom` template AST; `<script>` / `<script setup>` blocks reuse the TypeScript engine, with line numbers remapped to the whole .vue file |
+| CSS / SCSS / Sass / Less / PostCSS | Conservative spacing, compact-layout, and decorative-content candidates; visual conclusions still require a rendered page |
+| Rendered page (optional) | When browser/screenshot tools and a runnable app are available, the agent inspects relevant routes and viewports |
+| Persona task simulation (optional) | When the task can be executed in a browser, the agent records the steps and evaluates flow redundancy |
 
-**Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md) for the stack-extension details and [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md) for the form revision.
+**Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See [`dsh-user-experience-v0.3-spec.md`](dsh-user-experience-v0.3-spec.md) for evidence/product/language behavior, [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md) for stack details, and [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md) for the form revision.
 
-- Evidence level is fixed at **static** (source-code evidence); **no visual issues**: contrast, hit-target size, text truncation, focus order
+- Every finding is marked **`static`**, **`rendered`**, or **`interactive`**. Browser capability is optional: without it the walkthrough continues with static evidence and never pretends to have seen the page
+- Layout-density, visual-language, and primary-action findings require rendered evidence; redundant-flow findings require an interactive persona walkthrough
 - No automatic code changes: the plugin gives optimization suggestions; after you confirm a finding, it generates an observation-led task Prompt for a coding AI
-- Input is source code only; website input (v0.3) and design-mockup input (v0.4) are reserved roadmap items
+- This is still evidence-bounded: CSS can identify inspection leads, but actual whitespace, hierarchy, and visual quality are not asserted without a real rendered route
 
 ## Features
 
@@ -58,7 +62,10 @@ Once you confirm that a finding is real, the card provides a task Prompt you can
 |---|---|---|
 | Persona init | `/ux init` | The model generates 1–3 persona drafts from README / package.json / route structure and writes them to `.ux/personas.yml` **after user confirmation**; loads directly when the file already exists, without re-asking |
 | Persona context injection | automatic | Injects the active personas and walkthrough protocol into every request for the current project (aligned with the AGENTS.md section-provider pattern) |
-| Source walkthrough | `/ux scan` | Confirms scope first (architecture docs take precedence, otherwise asks for the feature/flow), then walks each persona independently and merges into one report; 9 high-confidence rules, model judgment first with AST verification as support |
+| Source and CSS walkthrough | `/ux scan` | Confirms scope first, then walks each persona independently and merges one report; 14 rules, model judgment first with AST/CSS verification as support |
+| Product-specific focus | automatic | Infers `consumer`, `enterprise`, `ecommerce`, `content`, `finance`, `healthcare`, `developer-tool`, `internal-tool`, or `other` from project docs and the scoped flow, then applies the corresponding UX priorities |
+| Multi-level evidence | automatic | `static` for source/CSS, `rendered` for real screenshots/DOM/measurements, and `interactive` for a recorded persona task. Missing browser capability degrades gracefully to static |
+| Output language | automatic / config | Uses an explicit `outputLanguage` override first; in `auto`, follows the current user's language when supplied by the agent, then the project's primary README. Report cards and AI handoff Prompts support Chinese and English |
 | **Change-triggered walkthrough** | automatic | After you edit a front-end file, the turn wraps up by walking **the whole component / page that file belongs to** — not the changed lines (missing-state issues do not exist in a diff). Reports quietly; speaks up only for level-one / level-two issues |
 | Report card | automatic | The first screen is plain language only: `[Level one] Admin page` + one sentence on what happened + what the user runs into. File paths, rule IDs and internal numbering live behind "technical details", which expands to structured YAML you can copy to an AI in one click |
 | Finding confirmation loop | card buttons / plain speech | Click Confirmed / Not an issue, or just say "the second one isn't a problem", "those are all right", "ignore everything below level three" — **no ID is ever needed**; verdicts go to the session log and fully restore on replay |
@@ -89,7 +96,7 @@ Resolution order: explicit `--mode=` → `mode` in `.ux/rules.local.yml` → plu
 
 Both confirmed states count as effective findings in the metrics; `stale` is **excluded from the denominator** — "scanned and found nothing" must be distinguished from "never scanned", or deleting code gets misread as fixing it.
 
-### The 9 rules
+### The 14 rules
 
 | ID | Rule | Verification path |
 |---|---|---|
@@ -102,6 +109,11 @@ Both confirmed states count as effective findings in the metrics; `stale` is **e
 | R-07 | Submit button not disabled while submitting | model+ast |
 | R-08 | No fallback for long/overflow content | model+ast |
 | R-09 | Dark/light mode adaptation missing | **ast** (fast lane, zero tokens) |
+| R-10 | Crowded layout or unclear grouping | source/CSS candidate + **rendered evidence required** |
+| R-11 | Long list without pagination, virtualization, folding, or limits | model+ast; static risk can be reported |
+| R-12 | Emoji/decorative elements inconsistent with the visual language | source/CSS candidate + **rendered evidence required** |
+| R-13 | Page purpose or primary action is unclear | source candidate + **rendered evidence required** |
+| R-14 | Redundant steps in a critical task | **interactive persona walkthrough required** |
 
 Severity is derived from a matrix: `impact` (does it block the persona's critical task; given by the model) × `reach` (share of target users affected; derived from the sum of `share` of hit personas, ≥0.5 is wide) → level one / two / three / four (still P0–P3 internally, never on screen).
 
@@ -164,6 +176,7 @@ After installation, the plugin row (id `ux-experience`) enters the configuration
     autoScanEditTools: ['write', 'edit']   # Tool names counted as "file edits"
     autoScanMaxFiles: 20         # Max changed files pulled into one automatic walkthrough
     autoScanDebounceTurns: 1     # Minimum turns between two automatic walkthroughs
+    outputLanguage: auto          # auto|zh-CN|en
 ```
 
 A user's `.ux/rules.local.yml` takes precedence over this layer.
@@ -187,14 +200,14 @@ the delete one — I confirm it
 
 After confirming a finding, click **Copy task Prompt for AI** on that card and paste it into your coding agent. The Prompt deliberately describes what users experience without guessing at the implementation from partial source context.
 
-After editing front-end code you need do nothing at all: the walkthrough runs as the turn wraps up, reports quietly, and speaks up only for level-one / level-two issues.
+After editing front-end code—including CSS—you need do nothing at all: the static walkthrough runs as the turn wraps up, reports quietly, and speaks up only for level-one / level-two issues. A user-initiated walkthrough can upgrade evidence with browser screenshots and persona task execution when those tools are available.
 
 ## Development
 
 ```sh
 pnpm install
 pnpm run build     # tsdown (host half + client bundle) + tsc (type declarations)
-pnpm test          # smoke tests (AST engine / persona / glossary / matrix / modes / fingerprints / ledger / end-to-end)
+pnpm test          # smoke tests (AST/CSS / evidence levels / localization / persona / modes / ledger / end-to-end)
 ```
 
 - **Version pinning**: DSH is in developer preview and its interfaces change. This repo pins `@deepseek-ai/dsh-*@0.1.0-rc.6` (`@deepseek-ai/cordis@4.0.1`); verify locally before upgrading the framework.
@@ -204,7 +217,7 @@ pnpm test          # smoke tests (AST engine / persona / glossary / matrix / mod
 ## Publish checklist
 
 - [x] README security note (see Installation above)
-- [x] README declares the scope (React TS/JS + Vue 3, static evidence only, no visual issues)
+- [x] README declares the evidence boundary (static fallback; rendered/interactive only with real browser evidence)
 - [x] v0.2 stack-extension spec (`dsh-user-experience-v0.2-spec.md`)
 - [x] v0.1.1 form-revision spec (`dsh-user-experience-v0.1.1-spec.md`)
 - [x] Pinned DSH dependency versions (developer preview)

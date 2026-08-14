@@ -4,7 +4,7 @@
 
 > DeepSeek Harness（DSH）UX 走查插件：**让 AI 模拟目标用户，在开发阶段提前发现用户体验问题，并给出具体优化建议。**
 >
-> 能力边界：支持 React + TypeScript / React + JavaScript / Vue 3、仅静态证据、不覆盖视觉类问题。
+> 能力边界：支持 React + TypeScript / React + JavaScript / Vue 3、CSS/布局分析；当前 Harness 会话能够打开项目时，可进一步获取浏览器证据。
 
 现有自动化检查（axe、Lighthouse）只能校验绝对规则——对比度够不够、有没有 alt。但体验问题的本质是**相对的**：删除前的二次确认，对偶尔操作的用户是保护，对每天处理上百条记录的操作员是损耗。脱离了"给谁用"，"体验问题"无法定义。
 
@@ -45,12 +45,16 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 | React + TypeScript（.ts / .tsx） | TypeScript 编译器 API（TSX） |
 | React + JavaScript（.js / .jsx） | 同一引擎，.js 也可能含 JSX，统一按 TSX 解析 |
 | Vue 3（.vue SFC） | `@vue/compiler-sfc` 拆分 + `@vue/compiler-dom` 模板 AST；`<script>` / `<script setup>` 块复用 TypeScript 引擎，行号平移到整个 .vue 文件 |
+| CSS / SCSS / Sass / Less / PostCSS | 保守提取间距、紧凑布局与装饰内容候选；视觉结论仍需真实页面证据 |
+| 真实页面（可选） | 当前会话有浏览器/截图工具且项目可运行时，检查相关路由和视口 |
+| Persona 任务模拟（可选） | 可以在浏览器中执行关键任务时，记录操作步骤并评估流程冗余 |
 
-**明确不支持（检出时如实告知，不给低质量猜测）**：Svelte、Vue 2（SFC 语法与 @vue/compiler-sfc 不兼容）、小程序（.wxml）等。技术栈扩展细节见 [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md)，形态修订见 [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md)。
+**明确不支持（检出时如实告知，不给低质量猜测）**：Svelte、Vue 2（SFC 语法与 @vue/compiler-sfc 不兼容）、小程序（.wxml）等。证据等级、产品类型与语言策略见 [`dsh-user-experience-v0.3-spec.md`](dsh-user-experience-v0.3-spec.md)，技术栈扩展细节见 [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md)，形态修订见 [`dsh-user-experience-v0.1.1-spec.md`](dsh-user-experience-v0.1.1-spec.md)。
 
-- 证据等级固定为 **static**（静态源码证据）；**不覆盖视觉类问题**：对比度、热区尺寸、文字截断、焦点顺序
+- 每条结论标记为 **`static`、`rendered` 或 `interactive`**。浏览器能力是可选项：不可用时继续静态走查，不会假装看过页面
+- 布局密度、视觉语言和主要操作层级问题至少需要 rendered 证据；流程冗余问题至少需要 interactive 任务记录
 - 不自动改代码：插件先给优化建议；用户确认问题后，再生成一份现象导向的任务 Prompt 交给编码 AI
-- 输入源仅源码；网站输入（v0.3）、设计图输入（v0.4）为预留路线
+- CSS 只能提供检查线索；没有真实路由截图时，不会断言页面留白、层级或视觉质量存在问题
 
 ## 功能
 
@@ -58,7 +62,10 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 |---|---|---|
 | Persona 初始化 | `/ux init` | 模型从 README / package.json / 路由结构生成 1-3 个画像草稿，**经用户确认后**写入 `.ux/personas.yml`；文件已存在时直接加载，不重复询问 |
 | Persona 上下文注入 | 自动 | 每次请求按当前项目注入生效画像与走查协议（对齐 AGENTS.md section provider 模式） |
-| 源码走查 | `/ux scan` | 先确定范围（架构说明优先，否则询问功能/流程），再逐 persona 独立走查、合并成一份报告；9 条高置信度规则，模型判断为主、AST 求证为辅 |
+| 源码与 CSS 走查 | `/ux scan` | 先确定范围，再逐 persona 独立走查、合并成一份报告；14 条规则，模型判断为主、AST/CSS 求证为辅 |
+| 按产品类型调整重点 | 自动 | 从项目文档和本次业务流程判断 `consumer`、`enterprise`、`ecommerce`、`content`、`finance`、`healthcare`、`developer-tool`、`internal-tool` 或 `other`，使用对应的体验要求 |
+| 三级证据 | 自动 | 源码/CSS 为 `static`，真实截图/DOM/尺寸为 `rendered`，记录 Persona 任务步骤后为 `interactive`；缺少浏览器能力时自动降级 |
+| 输出语言 | 自动 / 配置 | 显式配置 `outputLanguage` 时优先使用；`auto` 模式下先跟随当前用户语言，再回退到项目主 README。报告卡片和 AI 任务 Prompt 支持中英文 |
 | **改动触发的自动走查** | 自动 | 改完前端文件，回合收尾时自动对**所属的完整组件 / 页面**跑一次走查（不是 diff 那几行——缺失型问题在 diff 里根本不存在）；安静出报告，只在一级 / 二级问题时提示一句 |
 | 报告卡片 | 自动 | 首屏只展示关键信息：`[一级问题] 管理员页面` + 一句话说清出了什么事 + 用户会遇到什么；文件路径、规则 ID、内部编号折叠在「技术细节」里，展开后一键复制成结构化 YAML 直接粘给 AI |
 | 问题确认闭环 | 卡片按钮 / 直接说话 | 点「确认存在 / 不是问题」，或直接说「第 2 条不成立」「这几条都对」「三级以下全部忽略」——**全程不需要记任何编号**；判定写入会话日志，重放完整恢复 |
@@ -89,7 +96,7 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 指标计算时两种 confirmed 合并计入有效问题，`stale` **不计入分母**——必须区分「扫了没发现」与「根本没扫」，否则"删代码"会被误判成"改进"。
 
-### 9 条规则（v0.1）
+### 14 条规则
 
 | ID | 规则 | 验证路径 |
 |---|---|---|
@@ -102,6 +109,11 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 | R-07 | 提交中按钮未禁用 | model+ast |
 | R-08 | 无超长内容兜底 | model+ast |
 | R-09 | 深色/浅色模式适配缺失 | **ast**（快车道，零 token） |
+| R-10 | 布局拥挤或分组层级不清 | 源码/CSS 候选 + **必须有 rendered 证据** |
+| R-11 | 长列表缺少分页、虚拟滚动、折叠或数量限制 | model+ast；可以 static 风险结论输出 |
+| R-12 | Emoji/装饰元素与视觉语言不一致 | 源码/CSS 候选 + **必须有 rendered 证据** |
+| R-13 | 页面用途或主要操作不清 | 源码候选 + **必须有 rendered 证据** |
+| R-14 | 关键任务存在冗余交互 | **必须有 interactive Persona 任务记录** |
 
 严重度由矩阵推导：`impact`（是否阻断关键任务，模型给出）× `reach`（受影响用户占目标用户比例，由命中画像的 `share` 之和推导，≥0.5 为 wide）→ 一级 / 二级 / 三级 / 四级问题（内部仍是 P0~P3，但不上界面）。
 
@@ -164,6 +176,7 @@ autoScan:
     autoScanEditTools: ['write', 'edit']   # 视为"文件编辑"的工具名
     autoScanMaxFiles: 20         # 单次自动走查最多纳入的改动文件数
     autoScanDebounceTurns: 1     # 两次自动走查之间的最小回合间隔
+    outputLanguage: auto          # auto|zh-CN|en
 ```
 
 用户的 `.ux/rules.local.yml` 优先级高于本层配置。
@@ -187,14 +200,14 @@ autoScan:
 
 确认某条问题后，点击该卡片上的「复制给 AI 的任务 Prompt」，即可粘贴给编码 Agent。Prompt 会聚焦用户实际看到的现象，不会根据局部源码猜测具体实现方案。
 
-改完前端代码则完全不用管：回合收尾时自动跑一次走查，安静出报告，只有一级 / 二级问题才提示你一句。
+改完前端代码（包括 CSS）则完全不用管：回合收尾时自动跑一次静态走查，安静出报告，只有一级 / 二级问题才提示你一句。用户主动发起的走查会在工具可用时进一步获取浏览器截图并执行 Persona 任务。
 
 ## 开发
 
 ```sh
 pnpm install
 pnpm run build     # tsdown（node half + client bundle）+ tsc（类型声明）
-pnpm test          # 冒烟测试（AST 引擎 / persona / glossary / 矩阵 / 模式 / 指纹 / 账本 / 全链路）
+pnpm test          # 冒烟测试（AST/CSS / 证据等级 / 语言适配 / persona / 模式 / 账本 / 全链路）
 ```
 
 - **版本锁定**：DSH 处于 developer preview，接口会变。本仓库依赖锁定在 `@deepseek-ai/dsh-*@0.1.0-rc.6`（`@deepseek-ai/cordis@4.0.1`）；升级框架前先在本地跑通。
@@ -204,7 +217,7 @@ pnpm test          # 冒烟测试（AST 引擎 / persona / glossary / 矩阵 / �
 ## 发布检查项
 
 - [x] README 安全提示（见上方「安装」）
-- [x] README 声明能力边界（React TS/JS + Vue 3、仅静态证据、不覆盖视觉类问题）
+- [x] README 声明证据边界（默认 static；只有真实浏览器证据才能升级 rendered/interactive）
 - [x] v0.2 技术栈扩展说明文档（`dsh-user-experience-v0.2-spec.md`）
 - [x] v0.1.1 形态修订说明文档（`dsh-user-experience-v0.1.1-spec.md`）
 - [x] 锁定 DSH 依赖版本（developer preview）
