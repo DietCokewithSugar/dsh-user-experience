@@ -263,7 +263,7 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
       }
       const language = resolveOutputLanguage(cwd, config.outputLanguage, args.language)
       const productType = normalizeProductType(args.product_type)
-      const reviewFocus = productReviewFocus(productType, language)
+      const reviewFocus = [...productReviewFocus(productType, language)]
       const stack = detectStack(cwd)
       if (!stack.supported) {
         return {
