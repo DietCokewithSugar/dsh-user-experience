@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { HUMAN_COPY_RULE } from './human-copy'
 import type { Persona, PersonaCapability, PersonaFile } from './types'
 
 /** Persona 文件相对项目根的路径。 */
@@ -203,9 +204,18 @@ export function renderPersonaGuidance(personas: readonly Persona[]): string {
     '2. 硬约束：没有 locator（file，尽量带 symbol）的问题不输出。',
     '3. 判定顺序：模型读码提出候选 → 用 ux_scan 的结构化证据求证 → 确认后进 ux_report；R-09 由 AST 直接出结论。',
     '4. 多 persona 时逐个画像独立走查，最后合并进一份 ux_report：同一位置同一规则合并为一条，persona_refs 取并集。',
-    '5. 严重度由矩阵推导：impact 你给（是否阻断关键任务），reach 由命中画像 share 之和推导（>= 0.5 为 wide），P0/P1 必须优先处理。',
-    '6. R-02（术语不一致）条件触发：仅当本轮没有 P0/P1 问题时才执行；术语判定持久化到 .ux/glossary.yml，后续只做增量判断。',
+    '5. 严重度由矩阵推导：impact 你给（是否阻断关键任务），reach 由命中画像 share 之和推导（>= 0.5 为 wide），一级 / 二级问题必须优先处理。',
+    '6. R-02（术语不一致）条件触发：仅当本轮没有一级 / 二级问题时才执行；术语判定持久化到 .ux/glossary.yml，后续只做增量判断。',
     '7. "发现的问题总数"不是目标，宁缺毋滥：拿不准的候选宁可丢弃，不要凑数。',
+    '',
+    '报告是给两个读者看的（结构上已经分开，不要混着写）：',
+    `8. 给人看的：surface（人话页面名，如"管理员页面"；拟不出就用路由路径，绝不用文件路径）+ headline + description。${''}`,
+    `   ${HUMAN_COPY_RULE.split('\n').join('\n   ')}`,
+    '9. 给 AI 看的：locator / rule / verified_by / severity，照实填进 technical，不要塞进 description。',
+    '',
+    '确认闭环：',
+    '10. 用户说「第 2 条不成立」「这几条都对」「三级以下全部忽略」「删除那条我确认」时，调用 ux_judge 记录判定。',
+    '    绝不要让用户报告 ID 或问题编号，也不要让用户敲命令——他说什么，你直接转成 ux_judge 的 targets。',
   ].join('\n')
 }
 

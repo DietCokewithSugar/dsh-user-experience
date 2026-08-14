@@ -1,27 +1,36 @@
 /**
- * `/ux` 人工命令（spec §6 R1 / R4 / R6）：
+ * `/ux` 人工命令（spec §6 R1 / R4 / R6；v0.1.1 §4）：
  *
- * 注册到 `ctx.commands`，不消耗模型轮次。三个子命令：
+ * 注册到 `ctx.commands`，不消耗模型轮次。子命令：
  *
  * - `/ux init`    Persona 初始化（R1）：已初始化则直接展示；否则收集项目
  *                 素材简报并通过 `agent.followup()` 排队一个模型回合，由模型
  *                 生成 1-3 个画像草稿、交用户确认后调 `ux_personas_write` 落盘。
  * - `/ux scan`    走查发起（R6）：followup 排队范围确定流程（架构说明文件优先，
  *                 否则主动询问功能/页面/流程；模糊继续追问），随后逐 persona
- *                 走查并 ux_report 合并。
- * - `/ux judge`   问题确认闭环（R4）：报告卡片的「成立/不成立」按钮经客户端
- *                 remote 执行本命令，把判定写入 `ux/finding-status` 会话事件。
+ *                 走查并 ux_report 合并。可用 `--mode=auto|review|interactive`
+ *                 覆盖场景自动选择。
+ * - `/ux judge`   **脚本调用接口**：报告卡片的按钮经客户端 remote 执行本命令。
+ *                 v0.1.1 起它不出现在任何面向用户的提示、错误信息与文档中——
+ *                 用户点按钮或直接说话即可，判定由 `ux_judge` 工具承接。
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { CommandDefinition, CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
+import { applyVerdicts, currentReport } from './judge-tool'
+import { loadLocalRules } from './local-rules'
+import { extractModeFlag, modeInstruction, resolveMode } from './mode'
 import { collectInitBrief, loadPersonas, personasPath } from './persona'
+import type { ConfiguredMode } from './mode'
+import type { ExplicitVerdict } from './types'
 
 const HELP_TEXT = [
   'dsh-user-experience 命令：',
   '  /ux init                    初始化/查看目标用户画像（.ux/personas.yml）',
   '  /ux scan [功能/页面描述]    发起一次 UX 走查（先确定范围，再逐 persona 走查）',
-  '  /ux judge <报告ID> <findingID> <confirmed|rejected>   确认/否决报告卡片中的一条问题',
+  '',
+  '报告出来后，直接说「第 2 条不成立」「这几条都对」「三级以下全部忽略」即可，',
+  '也可以点卡片上的按钮——不需要记任何编号。',
 ].join('\n')
 
 /** `/ux init` 排队给模型的草稿任务说明（R1 路径一）。 */
@@ -45,7 +54,7 @@ function buildInitPrompt(brief: string): string {
 }
 
 /** `/ux scan` 排队给模型的范围确定与走查流程说明（R6 + R3 流程编排）。 */
-function buildScanPrompt(userIntent: string): string {
+function buildScanPrompt(userIntent: string, mode: string, modeReason: string): string {
   return [
     '[dsh-user-experience /ux scan] 发起一次 UX 走查，按以下顺序执行：',
     '',
@@ -56,25 +65,28 @@ function buildScanPrompt(userIntent: string): string {
     '   并引导补充具体描述（如"下单流程：从选品到支付成功"）。',
     '3. 用户描述模糊时继续追问（如"看看首页"），范围未明确前不开始扫描。',
     '',
-    '二、逐 persona 走查（若 .ux/personas.yml 不存在，先让用户执行 /ux init；无 persona 不出结论）：',
+    '二、逐 persona 走查（若 .ux/personas.yml 不存在，先让用户初始化画像；无 persona 不出结论）：',
     '1. 对每个 persona：调用 ux_scan（paths=范围目录，persona_id=该画像）获取结构化候选证据；',
     '   阅读候选对应的代码片段核实，按该画像的 goals / capability / key_paths 判定问题是否成立；',
     '   补充 AST 覆盖不到的语义问题（错误文案质量、术语一致性等）。',
     '2. 所有画像走查完后，调用一次 ux_report 合并定稿（同一位置同一规则自动合并，persona_refs 取并集），',
-    '   并把返回的 Markdown 报告呈现给用户。',
+    `   并把 mode 设为 "${mode}"；把返回的 Markdown 报告呈现给用户。`,
     '',
     '三、铁律：',
     '- 每条 finding 必须带 locator（file 必填），指不到位置的丢弃；',
+    '- 每条 finding 必须给 surface（人话页面名）与 headline / description（写用户会遇到什么，不写代码里缺什么）；',
     '- 拿不准的候选宁可丢弃，不要凑数；',
-    '- R-02 术语检查仅当本轮没有 P0/P1 问题时才执行；',
+    '- R-02 术语检查仅当本轮没有一级 / 二级问题时才执行；',
     '- 报告只做"提醒开发者去看一眼"，不改代码。',
     '',
-    ...(userIntent.length === 0 ? [] : [`用户补充的意向：${userIntent}`]),
+    `四、${modeInstruction(mode as 'auto' | 'review' | 'interactive')}`,
+    `（模式来源：${modeReason}）`,
+    ...(userIntent.length === 0 ? [] : ['', `用户补充的意向：${userIntent}`]),
   ].join('\n')
 }
 
 /** 解析并执行一个 /ux 子命令。 */
-function runSubcommand(invocation: CommandInvocation): CommandResult {
+function runSubcommand(invocation: CommandInvocation, configured: ConfiguredMode): CommandResult {
   const raw = invocation.rawInput.trim()
   const [sub, ...rest] = raw.length === 0 ? ['help'] : raw.split(/\s+/u)
   const cwd = invocation.agent.session.header.cwd
@@ -112,43 +124,63 @@ function runSubcommand(invocation: CommandInvocation): CommandResult {
         return { kind: 'error', text: '当前会话没有工作目录（cwd），无法定位项目' }
       }
       if (loadPersonas(cwd) === undefined) {
-        return { kind: 'error', text: '项目还没有目标用户画像：请先 /ux init 并确认画像。无 persona 不出 UX 结论。' }
+        return {
+          kind: 'error',
+          text: '这个项目还没有目标用户画像——无 persona 不出 UX 结论。直接说「帮我初始化 UX 画像」，模型会生成草稿交你确认。',
+        }
       }
+      const flag = extractModeFlag(rest.join(' '))
+      const resolved = resolveMode({
+        explicit: flag.mode,
+        localRules: loadLocalRules(cwd),
+        configured,
+        trigger: 'user',
+      })
       invocation.agent.followup(createUserMessage({
-        content: [{ type: 'text', text: buildScanPrompt(rest.join(' ')) }],
+        content: [{ type: 'text', text: buildScanPrompt(flag.rest, resolved.mode, resolved.reason) }],
         source: { kind: 'plugin', plugin: 'dsh-user-experience' },
       }))
-      return { kind: 'success', text: '走查已启动：模型将先确定走查范围，再逐 persona 走查并输出报告。' }
+      return {
+        kind: 'success',
+        text: `走查已启动（${resolved.mode} 模式）：模型将先确定走查范围，再逐 persona 走查并输出报告。`,
+      }
     }
 
     case 'judge': {
-      if (cwd === undefined) {
-        return { kind: 'error', text: '当前会话没有工作目录（cwd），无法定位项目' }
+      // 脚本调用接口（卡片按钮的执行通道）：不面向用户，故错误文案也只对调用方有意义。
+      const reportRef = rest[0]
+      const targets = (rest[1] ?? '').split(',').map((part) => part.trim()).filter((part) => part.length > 0)
+      const verdictWord = rest[2]
+      if (reportRef === undefined || targets.length === 0
+        || (verdictWord !== 'confirmed' && verdictWord !== 'rejected')) {
+        return { kind: 'error', text: '判定参数不完整：点卡片上的按钮，或直接说「第 2 条不成立」。' }
       }
-      const reportId = rest[0]
-      const findingId = rest[1]
-      const status = rest[2]
-      if (reportId === undefined || findingId === undefined
-        || (status !== 'confirmed' && status !== 'rejected')) {
-        return { kind: 'error', text: '用法：/ux judge <报告ID> <findingID> <confirmed|rejected>' }
+      const report = currentReport(
+        invocation.agent.session,
+        reportRef === 'latest' ? undefined : reportRef,
+      )
+      if (report === undefined) {
+        return { kind: 'error', text: '找不到对应的走查报告，可能会话已被清理。' }
       }
+      const verdict: ExplicitVerdict = verdictWord === 'rejected' ? 'rejected' : 'confirmed_explicit'
+      let outcome
       try {
-        invocation.agent.session.append('ux/finding-status', {
-          reportId,
-          findingId,
-          status,
-        })
+        outcome = applyVerdicts(invocation.agent.session, report, targets, verdict, cwd)
       } catch (error: unknown) {
         return {
           kind: 'error',
           text: `判定记录失败：${error instanceof Error ? error.message : String(error)}`,
         }
       }
+      if (outcome.applied.length === 0) {
+        return { kind: 'error', text: '没有匹配到要判定的问题。' }
+      }
+      const label = verdict === 'rejected' ? '不是问题' : '问题成立'
       return {
         kind: 'success',
-        text: status === 'confirmed'
-          ? `已记录 ${findingId} 为「成立」`
-          : `已记录 ${findingId} 为「不成立」`,
+        text: outcome.applied.length === 1
+          ? `已记录「${outcome.applied[0]?.headline ?? ''}」为「${label}」`
+          : `已记录 ${outcome.applied.length} 条为「${label}」`,
       }
     }
 
@@ -157,13 +189,16 @@ function runSubcommand(invocation: CommandInvocation): CommandResult {
   }
 }
 
-/** 注册 `/ux` 命令。 */
-export function createUxCommand(): CommandDefinition {
+/**
+ * 注册 `/ux` 命令。
+ * @param configured - 插件配置里的模式项（`detect` 表示场景自动选择）。
+ */
+export function createUxCommand(configured: ConfiguredMode = 'detect'): CommandDefinition {
   return {
     name: 'ux',
-    description: 'UX 走查：初始化目标用户画像、发起源码走查、确认/否决问题卡片',
-    input: { hint: 'init | scan [范围描述] | judge <报告ID> <findingID> <confirmed|rejected>' },
+    description: 'UX 走查：初始化目标用户画像、发起源码走查',
+    input: { hint: 'init | scan [范围描述] [--mode=auto|review|interactive]' },
     recordInput: true,
-    handler: (invocation) => runSubcommand(invocation),
+    handler: (invocation) => runSubcommand(invocation, configured),
   }
 }

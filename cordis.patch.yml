@@ -1,15 +1,25 @@
 # dsh-user-experience bundle patch: one dual-face package contributes a
-# Host-side plugin row (commands, system-prompt section, model tools) and —
-# through the package.json `dsh.client` declaration — the browser client
-# plugin (the ux-report conversation node). The modules node half discovers
-# the client bundle from this same row, so no second row is needed.
+# Host-side plugin row (commands, system-prompt section, model tools, the
+# change-triggered auto walkthrough) and — through the package.json
+# `dsh.client` declaration — the browser client plugin (the ux-report
+# conversation node). The modules node half discovers the client bundle from
+# this same row, so no second row is needed.
 #
 # 配置项（均可用 id `ux-experience` 在 profile 的 cordis.patch.yml 或
 # --patch 层覆盖）：
-#   maxScanFiles          单次扫描收集的最大文件数（默认 300）
-#   maxCandidatesPerRule  每条规则每文件的最大候选数（默认 5）
-#   maxFindings           单份报告允许的最大 finding 数（默认 30）
-#   excludePatterns       扫描时跳过的目录名（默认 node_modules/dist/build/…）
+#   maxScanFiles           单次扫描收集的最大文件数（默认 300）
+#   maxCandidatesPerRule   每条规则每文件的最大候选数（默认 5）
+#   maxCandidatesPerFile   每文件候选总数上限（默认 25）
+#   maxFindings            单份报告允许的最大 finding 数（默认 30）
+#   excludePatterns        扫描时跳过的目录名（默认 node_modules/dist/build/…）
+#   mode                   运行模式 detect|auto|review|interactive（默认 detect：
+#                          CI / 改动自动触发走 auto，用户主动发起走 review）
+#   autoScan               改动触发的自动走查开关（默认 true）
+#   autoScanEditTools      视为"文件编辑"的工具名（默认 ['write', 'edit']）
+#   autoScanMaxFiles       单次自动走查最多纳入的改动文件数（默认 20）
+#   autoScanDebounceTurns  两次自动走查之间的最小回合间隔（默认 1）
+#
+# 用户的个人偏好（`.ux/rules.local.yml` 的 mode / autoScan）优先级高于本层。
 
 - insert:
     - id: ux-experience

@@ -4,3 +4,8 @@ lib/
 .DS_Store
 .idea/
 .vscode/
+
+# 指纹历史账本：长期指标数据，不进仓库
+.ux/history.jsonl
+# 个人走查偏好，不强加给团队
+.ux/rules.local.yml

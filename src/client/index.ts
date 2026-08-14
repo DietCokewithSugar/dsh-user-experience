@@ -5,10 +5,10 @@
  * 职责：
  * - 注册 `ux-report` ConversationNodeDefinition：从会话日志的
  *   `ux/report`（start）与 `ux/finding-status`（update）事件增量组装报告
- *   状态，支持分页重放——确认状态是持久化会话状态，重新加载会话完整恢复；
- * - 在 `conversation.chat.node` 注册 keyed 渲染器：逐条渲染 finding，
- *   提供「成立 / 不成立」按钮；点击经 commands remote 执行 `/ux judge`，
- *   判定写回会话日志后由 Definition.update 驱动卡片实时更新。
+ *   状态，支持分页重放——判定是持久化会话状态，重新加载会话完整恢复；
+ * - 在 `conversation.chat.node` 注册 keyed 渲染器：首屏只给人话，技术细节
+ *   折叠；review 模式下提供批量确认；点击经 commands remote 执行判定，
+ *   写回会话日志后由 Definition.update 驱动卡片实时更新。
  *
  * 红线：渲染器只消费 node.data 与注入面，不扫描会话窗口或其他节点；
  * 跨插件协作走 cordis 服务（remote.commands），不 import 其他插件的运行值。
@@ -21,28 +21,36 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型侧：加载 ChatNodeDataMap / SlotMap 合并（模块增强的目标必须在本程序中被引用）。
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { UxFinding } from '../types'
+import { severityLabel, technicalYaml } from '../types'
+import type { FindingStatus, UxFinding, UxMode } from '../types'
 import { UxReportNodeView } from './report-view'
 
-/** 渲染器可见的单条 finding 视图（只含渲染所需叶子字段）。 */
+/**
+ * 渲染器可见的单条 finding 视图。
+ *
+ * **双读者在这里就是分开的**：`surface` / `severityLabel` / `headline` /
+ * `description` 上首屏；`technicalYaml` 是折叠区里可一键复制的整块。
+ * `level` 只用于配色，不显示字面量（P0~P3 是内部标识，不上界面）。
+ */
 export interface UxFindingView {
   id: string
-  rule: string
-  category: string
+  surface: string
+  severityLabel: string
+  headline: string
+  description: string
+  /** 内部严重度，仅用于徽标配色与排序。 */
   level: string
-  persona_refs: readonly string[]
-  file: string
-  symbol?: string
-  line?: number
-  rationale: string
-  suggestion: string
-  status: 'pending' | 'confirmed' | 'rejected'
+  /** 折叠区展示与复制的结构化技术细节。 */
+  technicalYaml: string
+  status: FindingStatus
 }
 
 /** 报告卡片数据（ChatNodeDataMap 注册值）。 */
 export interface UxReportChatData {
   reportId: string
   title: string
+  /** 运行模式：review 才渲染批量确认条（auto 不打断人）。 */
+  mode: UxMode
   findings: ReadonlyArray<UxFindingView>
 }
 
@@ -57,7 +65,76 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
 interface UxReportState {
   reportId: string
   title: string
+  mode: UxMode
   findings: readonly UxFinding[]
+}
+
+/** v0.1 的扁平 finding 形状（历史会话重放时仍可能出现）。 */
+interface LegacyFinding {
+  id: string
+  rule?: string
+  category?: string
+  persona_refs?: string[]
+  severity?: { impact?: string; reach?: string; level?: string }
+  evidence?: {
+    level?: string
+    verified_by?: string
+    locator?: { file?: string; symbol?: string; line?: number }
+    rationale?: string
+  }
+  suggestion?: string
+  status?: string
+}
+
+/**
+ * 把任意版本的事件载荷归一成当前结构。
+ *
+ * v0.1 的日志里 finding 是扁平的（evidence / severity 在顶层，没有 human /
+ * surface / fingerprint），历史会话重放时必须还能渲染——归一后 surface 退到
+ * 组件名，headline 退到依据原文，**仍然不会显示文件路径**。
+ * @param raw - 事件里的一条 finding（可能是旧形状）。
+ * @returns 当前结构的 finding。
+ */
+export function normalizeFinding(raw: UxFinding | LegacyFinding): UxFinding {
+  if ('human' in raw && 'technical' in raw) return raw
+  const legacy = raw as LegacyFinding
+  const level = legacy.severity?.level ?? 'P3'
+  const locator = legacy.evidence?.locator ?? { file: '' }
+  const rationale = legacy.evidence?.rationale ?? ''
+  const status: FindingStatus = legacy.status === 'confirmed' ? 'confirmed_explicit'
+    : legacy.status === 'rejected' ? 'rejected'
+      : 'pending'
+  return {
+    id: legacy.id,
+    fingerprint: '',
+    surface: locator.symbol ?? '（历史报告，未记录页面名）',
+    human: {
+      headline: rationale.length > 0 ? rationale : '（历史报告，未记录问题描述）',
+      description: legacy.suggestion ?? '',
+      severity_label: severityLabel(level),
+    },
+    technical: {
+      locator: {
+        file: locator.file ?? '',
+        ...(locator.symbol === undefined ? {} : { symbol: locator.symbol }),
+        ...(locator.line === undefined ? {} : { line: locator.line }),
+      },
+      rule: legacy.rule ?? '',
+      category: (legacy.category ?? 'state-coverage') as UxFinding['technical']['category'],
+      verified_by: (legacy.evidence?.verified_by ?? 'model') as UxFinding['technical']['verified_by'],
+      evidence_level: 'static',
+      persona_refs: legacy.persona_refs ?? [],
+      severity: {
+        impact: (legacy.severity?.impact ?? 'low') as UxFinding['technical']['severity']['impact'],
+        impact_confidence: 'medium',
+        reach: (legacy.severity?.reach ?? 'narrow') as UxFinding['technical']['severity']['reach'],
+        level: level as UxFinding['technical']['severity']['level'],
+      },
+      rationale,
+      suggestion: legacy.suggestion ?? '',
+    },
+    status,
+  }
 }
 
 function locationOf(context: ConversationNodeContext): ConversationLocation {
@@ -68,17 +145,15 @@ function viewData(state: UxReportState): UxReportChatData {
   return {
     reportId: state.reportId,
     title: state.title,
+    mode: state.mode,
     findings: state.findings.map((finding) => ({
       id: finding.id,
-      rule: finding.rule,
-      category: finding.category,
-      level: finding.severity.level,
-      persona_refs: finding.persona_refs,
-      file: finding.evidence.locator.file,
-      ...(finding.evidence.locator.symbol === undefined ? {} : { symbol: finding.evidence.locator.symbol }),
-      ...(finding.evidence.locator.line === undefined ? {} : { line: finding.evidence.locator.line }),
-      rationale: finding.evidence.rationale,
-      suggestion: finding.suggestion,
+      surface: finding.surface,
+      severityLabel: finding.human.severity_label,
+      headline: finding.human.headline,
+      description: finding.human.description,
+      level: finding.technical.severity.level,
+      technicalYaml: technicalYaml(finding),
       status: finding.status,
     })),
   }
@@ -101,7 +176,8 @@ export const uxReportDefinition: ConversationNodeDefinition<UxReportState> = {  
     return {
       reportId: match.event.data.reportId,
       title: match.event.data.title,
-      findings: match.event.data.findings,
+      mode: match.event.data.mode ?? 'review',
+      findings: match.event.data.findings.map(normalizeFinding),
     }
   },
   update: (context, match) => {
@@ -131,9 +207,16 @@ export const uxReportDefinition: ConversationNodeDefinition<UxReportState> = {  
   },
 }
 
-/** 注入面：judge 闭包持有 reportId 判定通道（经 commands remote 回 Host）。 */
+/**
+ * 注入面：judge 闭包持有判定通道（经 commands remote 回 Host）。
+ * 支持一次提交多条——批量确认条就靠它。
+ */
 export interface JudgeFace {
-  judge: (reportId: string, findingId: string, status: 'confirmed' | 'rejected') => Promise<string | null>
+  judge: (
+    reportId: string,
+    findingIds: readonly string[],
+    verdict: 'confirmed' | 'rejected',
+  ) => Promise<string | null>
 }
 
 export const inject = ['conversationEvents', 'slots', 'remote', 'remote.commands']
@@ -145,13 +228,14 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.chat.node',
     key: 'ux-report',
     inject: (sessionId: SessionId): JudgeFace => ({
-      judge: async (reportId, findingId, status): Promise<string | null> => {
+      judge: async (reportId, findingIds, verdict): Promise<string | null> => {
+        if (findingIds.length === 0) return null
         const result = await ctx.remote.commands.execute(
           sessionId,
-          `/ux judge ${reportId} ${findingId} ${status}`,
+          `/ux judge ${reportId} ${findingIds.join(',')} ${verdict}`,
         )
         if (!result.ok) return `${result.error.message} (${result.error.code})`
-        if (result.value === undefined) return 'unknown command: /ux judge'
+        if (result.value === undefined) return '判定通道不可用'
         return null
       },
     }),
