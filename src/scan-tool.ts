@@ -233,6 +233,8 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           '按当前 persona 判定每条候选是否成立；AST 覆盖不到的语义问题（R-01 文案质量、R-03 是否真不可逆、R-02 同义判定）由你阅读代码后补充。',
           'R-09 候选已由 AST 求证（verified_by=ast），无需再核实颜色本身，直接采用。',
           '每条 finding 必须带 locator（file 必填，尽量带 symbol）；指不到位置的候选直接丢弃。',
+          '每条 finding 还要写人话层：scene（在哪儿，如"管理员页面 · 用户列表"）、summary（发生了什么，一句话，不含文件名/规则 ID/代码术语）、'
+            + 'consequence（对用户的后果）——卡片第一屏只给人看这三项，读者是产品/运营；rationale 与 suggestion 是折叠起来交给 AI 的技术细节。',
           '拿不准的候选宁可丢弃——"发现问题总数"不是目标，宁缺毋滥。',
           '本轮无 P0/P1 问题时才执行 R-02 术语检查（条件触发），只对新增/变更术语做增量判断。',
           '多 persona 走查时：换 persona_id 重复本工具独立走查，最后统一调用一次 ux_report 合并定稿。',

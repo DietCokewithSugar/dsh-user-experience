@@ -4,6 +4,8 @@
  * 模型完成判定后的**唯一定稿入口**。职责：
  * - 校验 persona_refs（必须存在且非空；无 persona 不出结论）；
  * - 执行硬约束：没有 locator 的 finding 不输出（丢弃并给出原因）；
+ * - 人话层兜底：scene / summary 缺失时由 human.ts 从 locator 与规则名推导，
+ *   保证卡片第一屏永远说得出"在哪儿、发生了什么"；
  * - 严重度矩阵：impact 由模型给出，reach 由命中 persona 的 share 之和推导，
  *   level 由矩阵推导（spec §5.3）；
  * - 多 persona 合并：同一 locator 同一规则合并为一条，persona_refs 取并集；
@@ -16,6 +18,10 @@ import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { loadGlossary, mergeGlossary, type GlossaryTerm } from './glossary'
+import {
+  categoryWording, locatorText, ruleWording, sceneFallback,
+  severityWording, summaryFallback,
+} from './human'
 import { loadPersonas } from './persona'
 import { categoryOfRule, isRuleId } from './rules'
 import {
@@ -34,6 +40,12 @@ export interface FindingDraft {
   file: string
   symbol?: string
   line?: number
+  /** 人话层：场景/页面（缺省由 locator 推导）。 */
+  scene?: string
+  /** 人话层：一句话说明发生了什么（缺省由规则名 + 建议推导）。 */
+  summary?: string
+  /** 人话层：对用户造成的后果。 */
+  consequence?: string
   rationale: string
   suggestion: string
 }
@@ -73,6 +85,8 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
   const lines: string[] = [
     `# UX 走查报告：${result.title}`,
     '',
+    '> 每条问题先说**在哪儿**、**发生了什么**、**影响谁**；文件位置、规则、判定依据收在「技术细节」里，',
+    '> 确认成立后再整段交给 AI 修改。请在会话里的报告卡片上逐条点「确认是问题 / 不是问题」——只有你确认成立的才计入最终清单。',
     '> 证据等级：**static**（v0.1 仅静态源码证据；本版不覆盖视觉类问题——对比度、热区尺寸、文字截断、焦点顺序）。',
     `> 报告 ID：\`${result.report_id}\`｜严重度：impact（是否阻断关键任务）× reach（命中画像 share 之和）推导。`,
     '',
@@ -81,7 +95,7 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
   const common = findings.filter(isCommon)
   if (common.length > 0) {
     lines.push('## 共性问题（≥ 2 个 persona 独立命中，可信度更高）', '')
-    for (const finding of common) lines.push(renderFinding(finding, personas))
+    for (const finding of common) lines.push(renderFinding(finding, personas), '')
   }
   const seen = new Set(common.map((finding) => finding.id))
   const perPersona = new Map<string, UxFinding[]>()
@@ -95,7 +109,7 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
   }
   for (const [personaId, list] of perPersona) {
     lines.push(`## 个性问题 — ${personas.get(personaId) ?? personaId}`, '')
-    for (const finding of list) lines.push(renderFinding(finding, personas))
+    for (const finding of list) lines.push(renderFinding(finding, personas), '')
   }
   if (findings.length === 0) {
     lines.push('## 结果', '', '本轮未发现问题。宁缺毋滥：不要为了覆盖面凑数。', '')
@@ -106,13 +120,13 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
   }
   const countText = ['P0', 'P1', 'P2', 'P3']
     .filter((level) => counts.has(level))
-    .map((level) => `${level} × ${counts.get(level) ?? 0}`)
+    .map((level) => `${severityWording(level).name} × ${counts.get(level) ?? 0}`)
     .join('，') || '无'
   lines.push(
     '## 汇总',
     '',
     `- 本轮输出 ${findings.length} 条（${countText}）`,
-    `- 已确认 **0 / ${findings.length}**：请在报告卡片上逐条点击「成立 / 不成立」；仅 confirmed 计入最终清单`,
+    `- 已确认 **0 / ${findings.length}**：请在报告卡片上逐条点击「确认是问题 / 不是问题」；只有确认成立的才计入最终清单`,
   )
   if (result.dropped.length > 0) {
     lines.push(`- 丢弃 ${result.dropped.length} 条：`)
@@ -126,16 +140,25 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
   return lines.join('\n')
 }
 
+/**
+ * 单条问题：人话结论（场景 + 一句话 + 影响 + 涉及谁）在前，
+ * 技术细节（定位 / 规则 / 判定依据 / 修复方向）作为子条目缩进在后。
+ */
 function renderFinding(finding: UxFinding, personas: ReadonlyMap<string, string>): string {
-  const locator = `\`${finding.evidence.locator.file}\``
-    + (finding.evidence.locator.symbol === undefined ? '' : `（${finding.evidence.locator.symbol}）`)
+  const wording = severityWording(finding.severity.level)
+  const locator = `\`${locatorText(finding.evidence.locator.file, finding.evidence.locator.symbol, finding.evidence.locator.line)}\``
   const refs = finding.persona_refs.map((ref) => personas.get(ref) ?? ref).join('、')
-  return [
-    `- **[${finding.id}] [${finding.severity.level}] [${finding.category}]** ${locator}`,
-    `  - 命中画像：${refs}｜规则：${finding.rule}｜证据：${finding.evidence.level} / ${finding.evidence.verified_by}`,
-    `  - 依据：${finding.evidence.rationale}`,
-    `  - 建议：${finding.suggestion}`,
-  ].join('\n')
+  const lines = [`- **【${wording.name}】${finding.scene}** — ${finding.summary}`]
+  if (finding.consequence !== undefined && finding.consequence.length > 0) {
+    lines.push(`  - 影响：${finding.consequence}`)
+  }
+  lines.push(
+    `  - 涉及用户：${refs}${wording.hint === '' ? '' : `（${wording.hint}）`}`,
+    `  - 技术细节 · ${finding.id}：${locator}｜规则 ${ruleWording(finding.rule)}｜分类 ${categoryWording(finding.category)}｜证据 ${finding.evidence.level} / ${finding.evidence.verified_by}`,
+    `    - 判定依据：${finding.evidence.rationale}`,
+    `    - 修复方向：${finding.suggestion}`,
+  )
+  return lines.join('\n')
 }
 
 /** 注册 `ux_report` 工具。 */
@@ -144,6 +167,9 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
     name: 'ux_report',
     description: [
       'UX 走查定稿：把你判定后的 findings 汇总成正式报告。',
+      '每条 finding 都要写人话层：scene（在哪儿，如"管理员页面 · 用户列表"）、summary（发生了什么，一句话，',
+      '不要出现文件名/规则 ID/代码术语）、consequence（对用户的后果）——卡片第一屏只展示这三项，读者是产品/运营，',
+      'rationale 与 suggestion 属于技术细节，会被折叠起来供确认后交给 AI 修改。',
       '必须携带 persona_refs（每一条都非空且存在于 .ux/personas.yml）——无 persona 不出结论。',
       '硬约束：没有 locator（file）的 finding 会被丢弃并在报告中列出原因。',
       '严重度由矩阵推导：impact 由你给出，reach 由命中画像 share 之和推导（>=0.5 为 wide）。',
@@ -173,8 +199,22 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
             file: { type: 'string', required: true, description: '相对项目根的文件路径（locator 硬约束）' },
             symbol: { type: 'string', description: '组件 / 符号级定位' },
             line: { type: 'number', description: '行号（可选）' },
-            rationale: { type: 'string', required: true, description: '判定依据：规则 ID 或启发式条目原文' },
-            suggestion: { type: 'string', required: true, description: '优化方向描述（不给具体代码）' },
+            scene: {
+              type: 'string',
+              required: true,
+              description: '人话层：问题所在的场景/页面，用户能对上号的说法（如"管理员页面 · 用户列表"）；不要写文件路径',
+            },
+            summary: {
+              type: 'string',
+              required: true,
+              description: '人话层：一句话说明发生了什么，面向非技术读者（如"删除用户没有二次确认，点一下就直接删掉了"）；不要出现文件名、规则 ID、代码术语',
+            },
+            consequence: {
+              type: 'string',
+              description: '人话层：这会给用户造成什么后果（如"运营批量处理时容易误删，删掉的数据找不回来"）',
+            },
+            rationale: { type: 'string', required: true, description: '技术细节（折叠展示）：判定依据，规则 ID 或启发式条目原文' },
+            suggestion: { type: 'string', required: true, description: '技术细节（折叠展示）：优化方向描述（不给具体代码）' },
           },
         },
         required: true,
@@ -211,6 +251,9 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
                 persona_refs: { type: 'array', items: { type: 'string' } },
                 category: { type: 'string' },
                 rule: { type: 'string' },
+                scene: { type: 'string' },
+                summary: { type: 'string' },
+                consequence: { type: 'string' },
                 severity: {
                   type: 'object',
                   additionalProperties: false,
@@ -323,13 +366,25 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           if (impact === 'high' && existing.severity.impact === 'low') {
             existing.severity.impact = 'high'
           }
+          // 人话层首条为准，只补空：先命中的画像已经把话说清楚了，不覆盖。
+          const extra = draft.consequence?.trim() ?? ''
+          if (existing.consequence === undefined && extra.length > 0) {
+            existing.consequence = extra
+          }
           continue
         }
+        // 人话层：模型漏填时兜底，卡片第一屏不能空着（老报告重放同理）。
+        const scene = draft.scene?.trim() ?? ''
+        const summary = draft.summary?.trim() ?? ''
+        const consequence = draft.consequence?.trim() ?? ''
         const finding: UxFinding = {
           id: '', // 定稿阶段统一编号
           persona_refs: refs,
           category,
           rule: draft.rule,
+          scene: scene.length > 0 ? scene : sceneFallback(draft.file.trim(), draft.symbol),
+          summary: summary.length > 0 ? summary : summaryFallback(draft.rule, draft.suggestion),
+          ...(consequence.length > 0 ? { consequence } : {}),
           severity: {
             impact,
             reach,
@@ -369,10 +424,18 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
         finding.id = `UX-${String(index + 1).padStart(4, '0')}`
       })
 
+      // 卡片要用人话说"影响谁"，随事件带上本轮涉及画像的 id → 名称快照。
+      const involved = new Set<string>(args.persona_ids)
+      for (const finding of findings) {
+        for (const ref of finding.persona_refs) involved.add(ref)
+      }
       const reportId = mintReportId()
       agent.session.append('ux/report', {
         reportId,
         title: args.title,
+        personas: personas
+          .filter((persona) => involved.has(persona.id))
+          .map((persona) => ({ id: persona.id, name: persona.name })),
         findings,
       })
 

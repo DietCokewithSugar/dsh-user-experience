@@ -33,7 +33,8 @@ This plugin makes **target user personas** a prerequisite for the walkthrough: e
 | Persona init | `/ux init` | The model generates 1–3 persona drafts from README / package.json / route structure and writes them to `.ux/personas.yml` **after user confirmation**; loads directly when the file already exists, without re-asking |
 | Persona context injection | automatic | Injects the active personas and walkthrough protocol into every request for the current project (aligned with the AGENTS.md section-provider pattern) |
 | Source walkthrough | `/ux scan` | Confirms scope first (architecture docs take precedence, otherwise asks for the feature/flow), then walks each persona independently and merges into one report; 9 high-confidence rules, model judgment first with AST verification as support |
-| Finding confirmation loop | report card | Every finding carries a locator and Confirmed / Rejected buttons; verdicts are written to the session log and fully restored on replay |
+| Finding confirmation loop | report card | The first screen of a card is plain language — **where** (scene), **what happened** (one sentence), **who it affects** — plus a severity name (level 1…4 issue) and "This is a problem / Not a problem" buttons; verdicts are written to the session log and fully restored on replay |
+| Collapsed technical detail | report card | File location, rule, rationale and fix direction stay collapsed by default; expand to "Copy for AI" and hand the whole technical block to a model |
 | Report output | automatic | Markdown sorted P0→P3, common issues (hit by ≥2 personas) first; only confirmed findings count in the final list |
 | Glossary | automatic | R-02 term verdicts persist incrementally to `.ux/glossary.yml`; later rounds only compare deltas |
 
@@ -102,7 +103,8 @@ After installation, the plugin row (id `ux-experience`) enters the configuration
 ```text
 /ux init                          # Initialize target personas (draft → confirm → write)
 /ux scan Order flow from selection to payment   # Start a walkthrough (confirm scope first, then walk per persona)
-# Click Confirmed / Rejected on each finding in the report card — only confirmed ones enter the final list
+# Click "This is a problem" / "Not a problem" on each finding — only confirmed ones enter the final list
+# To act on one, expand its technical detail and hit "Copy for AI" to hand the locator and fix direction to a model
 ```
 
 ## Development
@@ -122,6 +124,7 @@ pnpm test          # smoke tests (AST engine / persona / glossary / matrix / end
 - [x] README security note (see Installation above)
 - [x] README declares the v0.2 scope (React TS/JS + Vue 3, static evidence only, no visual issues)
 - [x] v0.2 stack-extension spec (`dsh-user-experience-v0.2-spec.md`)
+- [x] v0.2.1 card-wording spec (`dsh-user-experience-v0.2.1-spec.md`)
 - [x] Pinned DSH dependency versions (developer preview)
 - [x] Repo has the **`dsh-plugin`** topic (official discovery mechanism)
 - [x] PR to [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin), one line each in the English and Chinese READMEs (auto-synced to the site after merge) — [PR #63 merged](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63), [copy update PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)

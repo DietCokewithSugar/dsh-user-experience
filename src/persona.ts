@@ -201,6 +201,8 @@ export function renderPersonaGuidance(personas: readonly Persona[]): string {
     'UX 走查协议：',
     '1. 每条 finding 必须携带非空 persona_refs，且其中每个 id 都存在于画像文件；R-09（深色模式）与用户画像无关，persona_refs 列全部画像。',
     '2. 硬约束：没有 locator（file，尽量带 symbol）的问题不输出。',
+    '2b. 每条 finding 都要写人话层：scene（在哪儿，用户对得上号的说法）、summary（发生了什么，一句话，不含文件名/规则 ID/代码术语）、'
+      + 'consequence（对用户的后果）。卡片第一屏只展示这三项供人工确认；locator、rationale、suggestion 折叠为技术细节，供确认后交给 AI 修改。',
     '3. 判定顺序：模型读码提出候选 → 用 ux_scan 的结构化证据求证 → 确认后进 ux_report；R-09 由 AST 直接出结论。',
     '4. 多 persona 时逐个画像独立走查，最后合并进一份 ux_report：同一位置同一规则合并为一条，persona_refs 取并集。',
     '5. 严重度由矩阵推导：impact 你给（是否阻断关键任务），reach 由命中画像 share 之和推导（>= 0.5 为 wide），P0/P1 必须优先处理。',

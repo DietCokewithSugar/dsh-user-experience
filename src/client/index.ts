@@ -21,14 +21,40 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型侧：加载 ChatNodeDataMap / SlotMap 合并（模块增强的目标必须在本程序中被引用）。
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import {
+  categoryWording, ruleWording, sceneFallback,
+  severityWording, summaryFallback,
+} from '../human'
 import type { UxFinding } from '../types'
 import { UxReportNodeView } from './report-view'
 
-/** 渲染器可见的单条 finding 视图（只含渲染所需叶子字段）。 */
+/**
+ * 渲染器可见的单条 finding 视图。分两层：
+ * - 人话层（scene / summary / consequence / levelName / personaNames）——卡片第一屏；
+ * - 技术层（rule / file / line / rationale / suggestion …）——折叠区，供复制给 AI。
+ */
 export interface UxFindingView {
   id: string
+  /** 人话层：场景/页面。 */
+  scene: string
+  /** 人话层：一句话说明发生了什么。 */
+  summary: string
+  /** 人话层：对用户造成的后果。 */
+  consequence?: string
+  /** 人话层：严重度说法（一级问题…四级问题）。 */
+  levelName: string
+  /** 人话层：该等级意味着什么。 */
+  levelHint: string
+  /** 人话层：命中画像的名称（无名称时回退 id）。 */
+  personaNames: readonly string[]
   rule: string
+  /** 技术层：规则完整说法（R-04 不可逆操作缺二次确认）。 */
+  ruleName: string
   category: string
+  /** 技术层：分类的中文说法。 */
+  categoryName: string
+  /** 技术层：证据等级 / 验证来源（static / model+ast）。 */
+  evidence: string
   level: string
   persona_refs: readonly string[]
   file: string
@@ -57,6 +83,8 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
 interface UxReportState {
   reportId: string
   title: string
+  /** 画像 id → 名称（老事件没带 personas 时为空，展示回退到 id）。 */
+  personaNames: ReadonlyMap<string, string>
   findings: readonly UxFinding[]
 }
 
@@ -64,23 +92,45 @@ function locationOf(context: ConversationNodeContext): ConversationLocation {
   return context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' }
 }
 
+/**
+ * 事件数据 → 卡片视图。人话层字段按"事件里有就用、没有就兜底"处理：
+ * 加了人话层之前写入的会话日志同样要能重放，那些老 finding 没有
+ * scene / summary，落到 human.ts 的兜底推导上。
+ */
 function viewData(state: UxReportState): UxReportChatData {
   return {
     reportId: state.reportId,
     title: state.title,
-    findings: state.findings.map((finding) => ({
-      id: finding.id,
-      rule: finding.rule,
-      category: finding.category,
-      level: finding.severity.level,
-      persona_refs: finding.persona_refs,
-      file: finding.evidence.locator.file,
-      ...(finding.evidence.locator.symbol === undefined ? {} : { symbol: finding.evidence.locator.symbol }),
-      ...(finding.evidence.locator.line === undefined ? {} : { line: finding.evidence.locator.line }),
-      rationale: finding.evidence.rationale,
-      suggestion: finding.suggestion,
-      status: finding.status,
-    })),
+    findings: state.findings.map((finding) => {
+      const { file, symbol, line } = finding.evidence.locator
+      const level = finding.severity.level
+      const wording = severityWording(level)
+      const scene = finding.scene?.trim() ?? ''
+      const summary = finding.summary?.trim() ?? ''
+      const consequence = finding.consequence?.trim() ?? ''
+      return {
+        id: finding.id,
+        scene: scene.length > 0 ? scene : sceneFallback(file, symbol),
+        summary: summary.length > 0 ? summary : summaryFallback(finding.rule, finding.suggestion),
+        ...(consequence.length > 0 ? { consequence } : {}),
+        levelName: wording.name,
+        levelHint: wording.hint,
+        personaNames: finding.persona_refs.map((ref) => state.personaNames.get(ref) ?? ref),
+        rule: finding.rule,
+        ruleName: ruleWording(finding.rule),
+        category: finding.category,
+        categoryName: categoryWording(finding.category),
+        evidence: `${finding.evidence.level} / ${finding.evidence.verified_by}`,
+        level,
+        persona_refs: finding.persona_refs,
+        file,
+        ...(symbol === undefined ? {} : { symbol }),
+        ...(line === undefined ? {} : { line }),
+        rationale: finding.evidence.rationale,
+        suggestion: finding.suggestion,
+        status: finding.status,
+      }
+    }),
   }
 }
 
@@ -101,6 +151,7 @@ export const uxReportDefinition: ConversationNodeDefinition<UxReportState> = {  
     return {
       reportId: match.event.data.reportId,
       title: match.event.data.title,
+      personaNames: new Map((match.event.data.personas ?? []).map((persona) => [persona.id, persona.name])),
       findings: match.event.data.findings,
     }
   },
