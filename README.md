@@ -1,6 +1,6 @@
 # dsh-user-experience
 
-> DeepSeek Harness（DSH）UX 走查插件：**先把"给谁用"问清楚，再在源码阶段发现体验问题。**
+> DeepSeek Harness（DSH）UX 走查插件：**帮你发现项目中可能存在的用户体验问题——自动走查 React/TypeScript 源码，定位问题并给出具体优化建议。**
 >
 > v0.1 能力边界：仅 React + TypeScript 源码、仅静态证据、不覆盖视觉类问题。
 
