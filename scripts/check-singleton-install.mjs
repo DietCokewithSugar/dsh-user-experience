@@ -57,7 +57,9 @@ try {
 
   execFileSync(
     'pnpm',
-    ['install', '--offline', '--ignore-scripts', '--strict-peer-dependencies'],
+    // GitHub Actions 的 pnpm store 可能已有包内容但没有新临时 importer 所需的
+    // registry metadata；prefer-offline 会优先复用缓存，并只在元数据缺失时联网。
+    ['install', '--prefer-offline', '--ignore-scripts', '--strict-peer-dependencies'],
     { cwd: temp, encoding: 'utf8', stdio: 'pipe' },
   )
 
