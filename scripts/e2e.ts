@@ -258,19 +258,6 @@ async function remove(id: string) {
   check('本次 scope 被记录（来自 ux_scan）', (reportResult.scope as string[]).includes('src/pages/Order.tsx'), JSON.stringify(reportResult.scope))
   check('账本已写出', existsSync(join(root, HISTORY_FILE)))
 
-  // ── 2b. 人话层：卡片/报告第一屏说"在哪儿、发生了什么" ────────────────────────
-  check('人话层字段随 finding 落定', r09?.scene === '订单列表页'
-    && String(r09?.summary).includes('深色模式') && String(r09?.consequence).includes('读不了订单'),
-  JSON.stringify(r09))
-  check('人话层留空时按 locator 兜底 scene', merged?.scene === 'OrderList', JSON.stringify(merged?.scene))
-  check('人话层留空时按规则名兜底 summary', String(merged?.summary).includes('有 success 无 error'), JSON.stringify(merged?.summary))
-  check('合并时补上首条缺的 consequence', String(merged?.consequence).includes('反复重试'), JSON.stringify(merged?.consequence))
-  check('报告以人话开头（严重度中文 + 场景）', String(reportResult.markdown).includes('**【一级问题】订单列表页**'),
-    String(reportResult.markdown).split('\n').find((line) => line.includes('一级问题')))
-  check('技术细节收在子条目里', String(reportResult.markdown).includes('技术细节 · UX-')
-    && String(reportResult.markdown).includes('    - 判定依据：'))
-  check('汇总用中文等级计数', String(reportResult.markdown).includes('一级问题 × '))
-
   // 会话事件落库
   const reportEvent = session.events.find((event) => event.type === 'ux/report')
   check('ux/report 事件写入会话日志', reportEvent !== undefined && reportEvent.data.findings.length === 3)

@@ -50,14 +50,6 @@ const TITLE: CSSProperties = { fontSize: 14, fontWeight: 600, margin: 0 }
 
 const META: CSSProperties = { color: 'rgba(128, 128, 128, 0.9)', fontSize: 12, margin: '2px 0 10px' }
 
-const HEADER_ROW: CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 8,
-  flexWrap: 'wrap',
-}
-
 const FINDING: CSSProperties = {
   borderTop: '1px solid rgba(128, 128, 128, 0.22)',
   padding: '10px 0',

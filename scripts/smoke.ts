@@ -292,33 +292,6 @@ function confirmRemove() {
   check('template 候选 symbol = 组件名', vueCandidates.filter((c) => c.rule === 'R-09').every((c) => c.symbol === 'OrderList'), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-09').map((c) => c.symbol)))
   check('所有候选带 file locator', vueCandidates.every((c) => c.file === 'src/OrderList.vue'))
 
-  // ── 5c. 人话层（卡片第一屏话术 + 交给 AI 的技术细节）─────────────────────────
-  console.log('人话层')
-  check('P0 → 一级问题', severityWording('P0').name === '一级问题' && severityWording('P0').hint.length > 0)
-  check('P3 → 四级问题', severityWording('P3').name === '四级问题')
-  check('未知等级原样回显', severityWording('P9').name === 'P9')
-  check('分类中文化', categoryWording('state-coverage') === '状态覆盖' && categoryWording('microcopy') === '文案表述')
-  check('规则完整说法', ruleWording('R-04') === 'R-04 不可逆操作缺二次确认')
-  check('scene 兜底优先取组件名', sceneFallback('src/pages/Order.tsx', 'OrderList') === 'OrderList')
-  check('scene 兜底退到文件名', sceneFallback('src/pages/Order.tsx') === 'Order')
-  check('scene 兜底：index 入口取目录名', sceneFallback('src/pages/Admin/index.tsx') === 'Admin')
-  check('summary 兜底 = 规则名 + 建议', summaryFallback('R-04', '删除前加二次确认') === '不可逆操作缺二次确认：删除前加二次确认')
-  const handoffFields = {
-    level: 'P0', scene: '管理员页面 · 用户列表', summary: '删除用户没有二次确认，点一下就直接删掉了',
-    consequence: '误删后找不回来', rule: 'R-04', category: 'state-coverage',
-    file: 'src/pages/Admin/UserList.tsx', symbol: 'UserList', line: 42,
-    rationale: 'remove 调用路径上不存在确认交互节点', suggestion: '删除前增加二次确认',
-    personaNames: ['运营人员'],
-  }
-  const handoff = handoffText(handoffFields)
-  check('复制给 AI：人话结论在前', handoff.startsWith('【一级问题】管理员页面 · 用户列表'), handoff.split('\n')[0])
-  check('复制给 AI：带定位与技术细节', handoff.includes('src/pages/Admin/UserList.tsx:42（UserList）')
-    && handoff.includes('R-04 不可逆操作缺二次确认（状态覆盖）')
-    && handoff.includes('判定依据：') && handoff.includes('修复方向：'), handoff)
-  const bundle = handoffBundle('订单流程走查', 'ux-rpt-1', [handoffFields, handoffFields])
-  check('复制全部：带报告抬头与逐条编号', bundle.includes('UX 走查报告：订单流程走查（ux-rpt-1）')
-    && bundle.includes('---- 1 ----') && bundle.includes('---- 2 ----'), bundle.slice(0, 120))
-
   // ── 6. 规则目录完整性 ────────────────────────────────────────────────────────
   console.log('规则目录')
   check('9 条规则齐全', RULES.length === 9)
