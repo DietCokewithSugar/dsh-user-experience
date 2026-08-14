@@ -85,6 +85,8 @@ interface FunctionFrame {
   node: ts.Node
   /** R-06：未覆盖的 await 站点。 */
   awaitSites: Array<{ node: ts.Node; snippet: string }>
+  /** R-17：全部 await 站点（含已有错误处理的调用）。 */
+  asyncSites: Array<{ node: ts.Node; snippet: string }>
   /** R-06：catch 子句列表。 */
   catchClauses: ts.CatchClause[]
   /** R-06：catch 内是否有用户可见反馈。 */
@@ -99,6 +101,10 @@ interface FunctionFrame {
   actionSites: Array<{ node: ts.Node; snippet: string }>
   /** R-13：页面/区块标题数量。 */
   headingCount: number
+  /** R-18：表单字段与必填字段统计。 */
+  formFields: Array<{ node: ts.Node; snippet: string; required: boolean }>
+  /** R-22：同一决策点的静态选项。 */
+  choiceSites: Array<{ node: ts.Node; snippet: string }>
   /** R-04：破坏性调用站点。 */
   destructiveSites: Array<{ node: ts.Node; snippet: string }>
 }
@@ -240,6 +246,52 @@ function finalizeFrame(ctx: WalkContext, frame: FunctionFrame): void {
       })
     }
   }
+
+  // R-17：存在异步等待，但没有进度/处理中状态信号。
+  if (frame.asyncSites.length > 0 && !/loading|pending|progress|processing|submitting|isBusy|isLoading|进度|处理中|加载中/iu.test(frameText)) {
+    const site = frame.asyncSites[0]
+    if (site !== undefined) {
+      addCandidate(ctx, {
+        rule: 'R-17',
+        symbol: frame.symbol,
+        line: lineOf(site.node, ctx.sourceFile),
+        snippet: site.snippet,
+        note: '异步流程未发现 loading/pending/progress/processing 等用户可见进度状态；需核实该操作是否存在可感知等待',
+        verified_by: 'model+ast',
+      })
+    }
+  }
+
+  // R-18：字段/必填项数量只用于定位，必要性仍需产品与截图证据。
+  const requiredFields = frame.formFields.filter((field) => field.required)
+  if (frame.formFields.length >= 8 || requiredFields.length >= 5) {
+    const field = frame.formFields[0]
+    if (field !== undefined) {
+      addCandidate(ctx, {
+        rule: 'R-18',
+        symbol: frame.symbol,
+        line: lineOf(field.node, ctx.sourceFile),
+        snippet: field.snippet,
+        note: `同一组件包含 ${frame.formFields.length} 个表单字段，其中 ${requiredFields.length} 个标记为必填；是否过度索取需结合任务目标和页面确认`,
+        verified_by: 'model+ast',
+      })
+    }
+  }
+
+  // R-22：大量同级选项且未见默认/推荐/搜索信号。
+  if (frame.choiceSites.length >= 10 && !/defaultValue|defaultChecked|selected|recommend|suggest|search|filter|推荐|默认/iu.test(frameText)) {
+    const choice = frame.choiceSites[0]
+    if (choice !== undefined) {
+      addCandidate(ctx, {
+        rule: 'R-22',
+        symbol: frame.symbol,
+        line: lineOf(choice.node, ctx.sourceFile),
+        snippet: choice.snippet,
+        note: `同一组件静态包含 ${frame.choiceSites.length} 个同级选项，未发现默认值、推荐项、搜索或分组信号；必须结合页面截图判断认知负担`,
+        verified_by: 'model+ast',
+      })
+    }
+  }
   // R-06：有 success 无 error。
   for (const site of frame.awaitSites.slice(0, 2)) {
     addCandidate(ctx, {
@@ -330,6 +382,7 @@ function walk(node: ts.Node, ctx: WalkContext): void {
       symbol: functionSymbol(node),
       node,
       awaitSites: [],
+      asyncSites: [],
       catchClauses: [],
       catchFeedback: false,
       loadingSite: undefined,
@@ -337,6 +390,8 @@ function walk(node: ts.Node, ctx: WalkContext): void {
       mapSite: undefined,
       actionSites: [],
       headingCount: 0,
+      formFields: [],
+      choiceSites: [],
       destructiveSites: [],
     }
     ctx.frames.push(inner)
@@ -350,6 +405,7 @@ function walk(node: ts.Node, ctx: WalkContext): void {
   if (frame !== undefined) {
     if (ts.isAwaitExpression(node)) {
       const chainRoot = outermostChain(node)
+      frame.asyncSites.push({ node, snippet: snippetOf(chainRoot, ctx.sourceFile) })
       if (!awaitCovered(chainRoot)) {
         frame.awaitSites.push({ node, snippet: snippetOf(chainRoot, ctx.sourceFile) })
       }
@@ -385,6 +441,16 @@ function walk(node: ts.Node, ctx: WalkContext): void {
     }
     if (/^h[1-2]$/iu.test(name) || /PageTitle|Heading|Header/iu.test(name)) {
       frame.headingCount += 1
+    }
+    if (/^(?:input|select|textarea)$/iu.test(name) || /Input|Select|Textarea|Field/iu.test(name)) {
+      const attributes = jsxAttributes(node)
+      const required = attributes.properties.some((attr) =>
+        ts.isJsxAttribute(attr) && ts.isIdentifier(attr.name)
+        && (attr.name.text === 'required' || attr.name.text === 'rules'))
+      frame.formFields.push({ node, snippet: snippetOf(node, ctx.sourceFile), required })
+    }
+    if (/^option$/iu.test(name) || /Option|Choice|Radio/iu.test(name)) {
+      frame.choiceSites.push({ node, snippet: snippetOf(node, ctx.sourceFile) })
     }
   }
 

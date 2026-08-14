@@ -246,10 +246,10 @@ const DRAFT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    rule: { type: 'string', required: true, description: 'R-01 … R-14' },
+    rule: { type: 'string', required: true, description: 'R-01 … R-27' },
     category: {
       type: 'string',
-      description: 'microcopy | state-coverage | theme-adaptation | layout-density | navigation-guidance | interaction-flow；缺省按规则推导',
+      description: 'microcopy | state-coverage | theme-adaptation | layout-density | navigation-guidance | interaction-flow | information-architecture | form-flow | consistency | edge-state | accessibility-performance；缺省按规则推导',
     },
     persona_refs: {
       type: 'array', items: { type: 'string' }, required: true,
@@ -311,7 +311,7 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
       'description 必须写"用户会遇到什么"，不写"代码里缺什么"；带代码腔的描述会被丢弃。',
       'surface 必须是开发者可理解的位置名或路由路径，给文件路径会被替换。',
       '证据分 static/rendered/interactive：后两者必须带截图、DOM 测量或任务步骤等 evidence_refs。',
-      'R-10/R-12/R-13 至少需要 rendered，R-14 至少需要 interactive；证据不足时不得输出正式 finding。',
+      '每条规则的最低证据等级由规则目录约束；视觉/跨页面比较通常需要 rendered，实际流程与性能通常需要 interactive。',
       '必须携带 persona_refs（每一条都非空且存在于 .ux/personas.yml）——无 persona 不出结论。',
       '硬约束：没有 locator（file）的 finding 会被丢弃并在报告中列出原因。',
       '严重度由矩阵推导：impact 由你给出，reach 由命中画像 share 之和推导（>=0.5 为 wide）；上界面时换成一级~四级问题。',
@@ -578,6 +578,9 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
         const category = draft.category === 'microcopy' || draft.category === 'state-coverage'
           || draft.category === 'theme-adaptation' || draft.category === 'layout-density'
           || draft.category === 'navigation-guidance' || draft.category === 'interaction-flow'
+          || draft.category === 'information-architecture' || draft.category === 'form-flow'
+          || draft.category === 'consistency' || draft.category === 'edge-state'
+          || draft.category === 'accessibility-performance'
           ? draft.category
           : categoryOfRule(draft.rule)
         const impact: Impact = draft.impact === 'high' ? 'high' : 'low'

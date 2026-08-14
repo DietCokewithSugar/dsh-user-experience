@@ -45,6 +45,11 @@ export const CATEGORY_WORDING: Record<FindingCategory, string> = {
   'layout-density': '布局与信息密度',
   'navigation-guidance': '页面理解与操作指引',
   'interaction-flow': '交互流程',
+  'information-architecture': '信息架构与导航',
+  'form-flow': '表单与流程',
+  consistency: '一致性',
+  'edge-state': '边缘状态',
+  'accessibility-performance': '基础可用性与性能',
 }
 
 /** 取分类的人话说法；未知分类原样回显。 */

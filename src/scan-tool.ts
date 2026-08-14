@@ -20,6 +20,7 @@ import ts from 'typescript'
 import { extractCssCandidates } from './css'
 import { extractCandidates } from './ast'
 import { isChinese, resolveOutputLanguage, type OutputLanguage } from './i18n'
+import { nielsenGuidance, reviewPriority } from './heuristics'
 import { loadGlossary } from './glossary'
 import { detectStack, gatherFiles, gatherStyleFiles, readSourceFile, suggestSourceRoots } from './project'
 import type { StackKind } from './project'
@@ -56,6 +57,19 @@ const RULE_NAME_EN: Record<string, string> = {
   'R-12': 'Decorative elements conflict with visual language',
   'R-13': 'Page purpose or primary action is unclear',
   'R-14': 'Critical task contains redundant interaction',
+  'R-15': 'Navigation does not match user tasks',
+  'R-16': 'Navigation is too deep or lacks location context',
+  'R-17': 'Long-running operation has no progress feedback',
+  'R-18': 'Form requests too many or excessive required fields',
+  'R-19': 'Form validation feedback arrives too late',
+  'R-20': 'Form progress is lost when leaving',
+  'R-21': 'Flow has no exit, cancel, or undo path',
+  'R-22': 'Too many choices without defaults or recommendations',
+  'R-23': 'Equivalent actions differ across pages',
+  'R-24': 'Similar components behave inconsistently',
+  'R-25': 'First-use, offline, or permission states are missing',
+  'R-26': 'Basic visual usability is insufficient',
+  'R-27': 'Response time harms the critical task',
 }
 
 export interface ScanResult {
@@ -67,6 +81,8 @@ export interface ScanResult {
   language: OutputLanguage
   product_type: ProductType
   review_focus: readonly string[]
+  heuristics: readonly string[]
+  review_priority: readonly string[]
   files: Array<{ path: string; size: number }>
   file_count: number
   truncated: boolean
@@ -81,7 +97,7 @@ const CANDIDATE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    rule: { type: 'string', description: '规则 ID：R-01 … R-14' },
+    rule: { type: 'string', description: '规则 ID：R-01 … R-27' },
     file: { type: 'string', description: '相对项目根的文件路径（locator）' },
     symbol: { type: 'string', description: '组件 / 符号级定位' },
     line: { type: 'number', description: '行号（可选）' },
@@ -111,6 +127,8 @@ function renderScanResult(result: ScanResult): string {
     : `Stack: ${result.stack}; collected ${result.file_count} source/style files${result.truncated ? ' (limit reached; narrow the scope)' : ''}.`)
   lines.push(`${zh ? '产品类型' : 'Product type'}: ${result.product_type}; `
     + `${zh ? '本类产品重点' : 'review focus'}: ${result.review_focus.join(zh ? '、' : ', ')}`)
+  lines.push(`${zh ? '基础框架' : 'Base framework'}: Nielsen 10 heuristics`)
+  lines.push(`${zh ? '检查顺序' : 'Review order'}: ${result.review_priority.join(zh ? '；' : '; ')}`)
   const byRule = new Map<string, AstCandidate[]>()
   for (const candidate of result.candidates) {
     const list = byRule.get(candidate.rule) ?? []
@@ -209,6 +227,8 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           language: { type: 'string' },
           product_type: { type: 'string' },
           review_focus: { type: 'array', items: { type: 'string' } },
+          heuristics: { type: 'array', items: { type: 'string' } },
+          review_priority: { type: 'array', items: { type: 'string' } },
           files: {
             type: 'array',
             items: {
@@ -264,6 +284,8 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
       const language = resolveOutputLanguage(cwd, config.outputLanguage, args.language)
       const productType = normalizeProductType(args.product_type)
       const reviewFocus = [...productReviewFocus(productType, language)]
+      const heuristics = [...nielsenGuidance(language)]
+      const reviewOrder = [...reviewPriority(language)]
       const stack = detectStack(cwd)
       if (!stack.supported) {
         return {
@@ -273,6 +295,8 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           language,
           product_type: productType,
           review_focus: reviewFocus,
+          heuristics,
+          review_priority: reviewOrder,
           files: [],
           file_count: 0,
           truncated: false,
@@ -356,6 +380,8 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         language,
         product_type: productType,
         review_focus: reviewFocus,
+        heuristics,
+        review_priority: reviewOrder,
         ...(args.focus === undefined ? {} : { focus: args.focus }),
         ...(args.persona_id === undefined ? {} : { persona_id: args.persona_id }),
         files: allFiles,
@@ -370,10 +396,12 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
             + '都没有就据组件名与页面内容拟名；拟不出时用路由路径，不能用文件路径。',
           HUMAN_COPY_RULE,
           `按 ${productType} 产品重点（${reviewFocus.join('、')}）和当前 persona 判定，不套用统一的信息密度或流程标准。`,
+          `以 Nielsen 十项原则为基础逐项复核：${heuristics.join('；')}。`,
+          `按常见程度检查：${reviewOrder.join('；')}。最终报告仍按实际严重度排序。`,
           'CSS/布局、Emoji、标题缺失候选只是截图检查入口，不能直接定稿。',
           '如果浏览器/截图工具可用且项目能打开，检查相关路由与视口并记录截图/DOM/尺寸引用；否则保持 static。',
           '只有实际按 persona 完成关键任务并记录步骤，才能使用 interactive。',
-          'R-10/R-12/R-13 至少需要 rendered；R-14 至少需要 interactive。证据不足时丢弃，不得升级标签。',
+          '严格使用规则目录中的 minimumEvidence；证据不足时丢弃，不得升级标签。',
           'R-09 候选已由 AST 求证（verified_by=ast），无需再核实颜色本身，直接采用。',
           '每条 finding 必须带 locator（file 必填，尽量带 symbol）；指不到位置的候选直接丢弃。',
           '拿不准的候选宁可丢弃——"发现问题总数"不是目标，宁缺毋滥。',
@@ -384,10 +412,12 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           'Read each candidate at file:line and verify the attached source snippet.',
           'Use a developer-readable page/flow name for surface; use route/title/heading hints, never a file path.',
           `Judge candidates for the current persona and ${productType} product focus: ${reviewFocus.join(', ')}.`,
+          `Use Nielsen's ten usability heuristics as the base checklist: ${heuristics.join('; ')}.`,
+          `Review common issues first: ${reviewOrder.join('; ')}. Keep final report ordering severity-based.`,
           'CSS/layout, Emoji, and missing-heading candidates are inspection leads, not final visual findings.',
           'When browser/screenshot tools and a runnable app are available, inspect the route and viewport and record screenshot/DOM/measurement references; otherwise remain static.',
           'Use interactive only after completing the persona task and recording the steps.',
-          'R-10/R-12/R-13 require rendered evidence; R-14 requires interactive evidence. Drop findings that do not meet the evidence threshold.',
+          'Enforce each rule’s minimumEvidence. Drop findings that do not meet the threshold.',
           'R-09 candidates are AST-verified and can be used as static findings.',
           'Every finding needs a file locator and persona_refs. Prefer precision over finding count.',
           `Suggested roots: ${suggestSourceRoots(cwd).join(', ') || '(none found)'}`,

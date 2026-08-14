@@ -70,6 +70,11 @@ export type FindingCategory =
   | 'layout-density'
   | 'navigation-guidance'
   | 'interaction-flow'
+  | 'information-architecture'
+  | 'form-flow'
+  | 'consistency'
+  | 'edge-state'
+  | 'accessibility-performance'
 
 /**
  * 证据等级：
@@ -154,7 +159,7 @@ export interface FindingHuman {
 /** 给 AI 看的那一半：折叠区，可整块复制粘贴给模型。 */
 export interface FindingTechnical {
   locator: FindingLocator
-  /** 命中规则的 ID（R-01 … R-14）。 */
+  /** 命中规则的 ID（R-01 … R-27）。 */
   rule: string
   category: FindingCategory
   /** 无效问题归因：来自哪条路径（model / model+ast / ast）。 */

@@ -38,7 +38,8 @@ Once you confirm that a finding is real, the card provides a task Prompt you can
 
 ## What’s new: visual evidence, product context, and localization
 
-- **14-rule walkthrough:** source and CSS analysis now adds layout density, long-list handling, Emoji/visual-language consistency, primary-action clarity, and redundant task-flow checks.
+- **27-rule walkthrough:** the checklist now covers information architecture, navigation, system feedback, forms, cognitive load, consistency, edge states, basic usability, and performance.
+- **Nielsen-based foundation:** Nielsen’s ten usability heuristics provide the shared baseline, then product type and Persona context adjust priorities.
 - **Evidence gates:** every finding is labeled `static`, `rendered`, or `interactive`. Visual findings need real screenshot/DOM references; flow findings need recorded Persona task steps.
 - **Product-aware priorities:** ecommerce, enterprise, finance, healthcare, content, developer tools, internal tools, and consumer products are reviewed against different UX needs.
 - **Localized output:** reports, card actions, verdict summaries, and AI task Prompts support Chinese and English. English selectors such as `item 2` and `below level three` are also understood.
@@ -78,7 +79,7 @@ The report card and confirmation workflow can use the developer’s language (in
 |---|---|---|
 | Persona init | `/ux init` | The model generates 1–3 persona drafts from README / package.json / route structure and writes them to `.ux/personas.yml` **after user confirmation**; loads directly when the file already exists, without re-asking |
 | Persona context injection | automatic | Injects the active personas and walkthrough protocol into every request for the current project (aligned with the AGENTS.md section-provider pattern) |
-| Source and CSS walkthrough | `/ux scan` | Confirms scope first, then walks each persona independently and merges one report; 14 rules, model judgment first with AST/CSS verification as support |
+| Source and CSS walkthrough | `/ux scan` | Confirms scope first, then walks each persona independently and merges one report; 27 rules based on Nielsen’s heuristics, with model judgment and AST/CSS verification |
 | Product-specific focus | automatic | Infers `consumer`, `enterprise`, `ecommerce`, `content`, `finance`, `healthcare`, `developer-tool`, `internal-tool`, or `other` from project docs and the scoped flow, then applies the corresponding UX priorities |
 | Multi-level evidence | automatic | `static` for source/CSS, `rendered` for real screenshots/DOM/measurements, and `interactive` for a recorded persona task. Missing browser capability degrades gracefully to static |
 | Output language | automatic / config | Uses an explicit `outputLanguage` override first; in `auto`, follows the current user's language when supplied by the agent, then the project's primary README. Report cards and AI handoff Prompts support Chinese and English |
@@ -112,7 +113,11 @@ Resolution order: explicit `--mode=` → `mode` in `.ux/rules.local.yml` → plu
 
 Both confirmed states count as effective findings in the metrics; `stale` is **excluded from the denominator** — "scanned and found nothing" must be distinguished from "never scanned", or deleting code gets misread as fixing it.
 
-### The 14 rules
+### High-frequency review order
+
+The walkthrough checks common issues first: (1) feedback and system status; (2) forms and flow recovery; (3) information architecture, navigation, and primary actions; then (4) cognitive load, consistency, edge states, basic usability, and performance. This order improves review efficiency; the final report is still sorted by actual severity.
+
+### The 27 rules
 
 | ID | Rule | Verification path |
 |---|---|---|
@@ -130,6 +135,19 @@ Both confirmed states count as effective findings in the metrics; `stale` is **e
 | R-12 | Emoji/decorative elements inconsistent with the visual language | source/CSS candidate + **rendered evidence required** |
 | R-13 | Page purpose or primary action is unclear | source candidate + **rendered evidence required** |
 | R-14 | Redundant steps in a critical task | **interactive persona walkthrough required** |
+| R-15 | Navigation categories do not match user tasks | **interactive task-finding walkthrough required** |
+| R-16 | Navigation is too deep or lacks location context | **interactive navigation evidence required** |
+| R-17 | Long-running operation has no progress feedback | model+ast; static evidence |
+| R-18 | Form requests too many or excessive required fields | source candidate + **rendered evidence required** |
+| R-19 | Form validation feedback arrives too late | **interactive form task required** |
+| R-20 | Form progress is lost when leaving | **interactive leave-and-return task required** |
+| R-21 | Flow has no exit, cancel, or undo path | **interactive task required** |
+| R-22 | Too many choices without defaults or recommendations | source candidate + **rendered evidence required** |
+| R-23 | Equivalent actions differ across pages | **rendered cross-page evidence required** |
+| R-24 | Similar components behave inconsistently | **interactive comparison required** |
+| R-25 | First-use, offline, or permission states are missing | model+ast; static scoped evidence |
+| R-26 | Contrast, font size, or touch targets reduce usability | **rendered measurements required** |
+| R-27 | Response time harms a critical task | **interactive timing evidence required** |
 
 Severity is derived from a matrix: `impact` (does it block the persona's critical task; given by the model) × `reach` (share of target users affected; derived from the sum of `share` of hit personas, ≥0.5 is wide) → level one / two / three / four (still P0–P3 internally, never on screen).
 

@@ -56,6 +56,11 @@ interface TemplateWalkState {
   actionCount: number
   firstAction: { line: number; snippet: string } | undefined
   headingCount: number
+  formFieldCount: number
+  requiredFieldCount: number
+  firstField: { line: number; snippet: string } | undefined
+  choiceCount: number
+  firstChoice: { line: number; snippet: string } | undefined
   loadingSite: { line: number; snippet: string } | undefined
 }
 
@@ -217,8 +222,12 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
       || (grandEl !== null && CONFIRM_TAG.test(grandEl.tag))
 
     const buttonLike = el.tag === 'button' || /Button|Btn/iu.test(el.tag)
+    const formField = /^(?:input|select|textarea)$/iu.test(el.tag)
+      || /Input|Select|Textarea|Field/iu.test(el.tag)
+    const choiceLike = /^option$/iu.test(el.tag) || /Option|Choice|Radio/iu.test(el.tag)
     let onClickExp: ExpressionNode | undefined
     let covered = false
+    let fieldRequired = false
     const attrs = new Map<string, string>()
 
     for (const prop of el.props) {
@@ -231,6 +240,7 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
           }
         }
         if (attr.name === 'disabled') covered = true
+        if (attr.name === 'required' || attr.name === 'rules') fieldRequired = true
         // R-09：静态 class 属性写死颜色类且无 dark: 变体。
         if (attr.name === 'class' && attr.value !== undefined) {
           const value = attr.value.content
@@ -289,6 +299,7 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
             })
           }
           if (argName === 'disabled' || argName === 'loading') covered = true
+          if (argName === 'required' || argName === 'rules') fieldRequired = true
         }
 
         // R-05：v-if 加载分支 + v-for 信号。
@@ -331,6 +342,16 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
           }
         }
       }
+    }
+
+    if (formField) {
+      state.formFieldCount += 1
+      if (fieldRequired) state.requiredFieldCount += 1
+      state.firstField ??= { line: el.loc.start.line, snippet: snippetOf(el) }
+    }
+    if (choiceLike) {
+      state.choiceCount += 1
+      state.firstChoice ??= { line: el.loc.start.line, snippet: snippetOf(el) }
     }
 
     // R-07：提交按钮无 pending 锁定。
@@ -389,6 +410,25 @@ function walkTemplate(root: { children: TemplateChildNode[] }, ctx: VueCandidate
       line: state.firstAction.line,
       snippet: state.firstAction.snippet,
       note: '模板包含多个操作入口，但未发现 h1/h2 或等价页面标题；是否难以理解页面用途必须结合首屏截图确认',
+      verified_by: 'model+ast',
+    })
+  }
+  if ((state.formFieldCount >= 8 || state.requiredFieldCount >= 5) && state.firstField !== undefined) {
+    addVueCandidate(ctx, {
+      rule: 'R-18',
+      line: state.firstField.line,
+      snippet: state.firstField.snippet,
+      note: `同一模板包含 ${state.formFieldCount} 个表单字段，其中 ${state.requiredFieldCount} 个标记为必填；是否过度索取需结合任务目标和页面确认`,
+      verified_by: 'model+ast',
+    })
+  }
+  if (state.choiceCount >= 10 && state.firstChoice !== undefined
+    && !/default|selected|recommend|suggest|search|filter|推荐|默认/iu.test(state.templateText)) {
+    addVueCandidate(ctx, {
+      rule: 'R-22',
+      line: state.firstChoice.line,
+      snippet: state.firstChoice.snippet,
+      note: `同一模板包含 ${state.choiceCount} 个同级选项，未发现默认值、推荐项、搜索或分组信号；必须结合页面截图判断认知负担`,
       verified_by: 'model+ast',
     })
   }
@@ -543,6 +583,11 @@ export function extractVueCandidates(
         actionCount: 0,
         firstAction: undefined,
         headingCount: 0,
+        formFieldCount: 0,
+        requiredFieldCount: 0,
+        firstField: undefined,
+        choiceCount: 0,
+        firstChoice: undefined,
         loadingSite: undefined,
       }
       walkTemplate(root, ctx, state)
