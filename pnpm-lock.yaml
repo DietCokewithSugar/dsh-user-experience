@@ -8,6 +8,22 @@ importers:
 
   .:
     dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.1
+        version: 3.18.1
+      '@vue/compiler-dom':
+        specifier: ^3.5.41
+        version: 3.5.41
+      '@vue/compiler-sfc':
+        specifier: ^3.5.41
+        version: 3.5.41
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      yaml:
+        specifier: ^2.6.0
+        version: 2.9.0
+    devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.1
         version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
@@ -44,22 +60,6 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
-      '@deepseek-ai/schemastery':
-        specifier: 3.18.1
-        version: 3.18.1
-      '@vue/compiler-dom':
-        specifier: ^3.5.41
-        version: 3.5.41
-      '@vue/compiler-sfc':
-        specifier: ^3.5.41
-        version: 3.5.41
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      yaml:
-        specifier: ^2.6.0
-        version: 2.9.0
-    devDependencies:
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1
