@@ -22,9 +22,8 @@
  * 纯 React.createElement（无 JSX）；样式内联，不触碰全局主题与 DOM。
  */
 
-import { createElement, useState, type CSSProperties, type ReactNode } from 'react'
+import { createElement, useState, type CSSProperties } from 'react'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { handoffBundle, handoffText, locatorText } from '../human'
 import type { JudgeFace, UxFindingView } from './index'
 
 const SEVERITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
@@ -248,13 +247,6 @@ function FindingRow({
             : '复制技术细节'),
       )
       : null,
-    createElement('button', {
-      type: 'button',
-      style: TOGGLE_BUTTON,
-      'aria-expanded': handlers.expanded,
-      onClick: () => handlers.onToggle(finding.id),
-    }, `${handlers.expanded ? '▾' : '▸'} 技术细节（文件位置 / 判定依据 / 修复方向）`),
-    handlers.expanded ? detailPanel(finding, handlers) : null,
   )
 }
 
