@@ -255,6 +255,34 @@ export function technicalYaml(finding: UxFinding): string {
   ].join('\n')
 }
 
+/**
+ * 为已确认的问题生成可直接交给编码 AI 的任务 Prompt。
+ *
+ * Prompt 只描述已经观察到的现象、用户影响与验收目标，不携带 suggestion /
+ * rationale，避免插件基于局部代码替 AI 预设实现方案。locator 只是帮助 AI
+ * 开始调查的线索；Prompt 会明确要求先补齐完整项目上下文。
+ */
+export function deliveryPrompt(finding: UxFinding): string {
+  const locator = `${finding.technical.locator.file}`
+    + (finding.technical.locator.line === undefined ? '' : `:${String(finding.technical.locator.line)}`)
+    + (finding.technical.locator.symbol === undefined ? '' : `（${finding.technical.locator.symbol}）`)
+  return [
+    '请处理下面这个已经确认的用户体验问题。',
+    '',
+    `观察到的现象：${finding.human.headline}`,
+    `用户实际遇到的情况：${finding.human.description}`,
+    `发生场景：${finding.surface}`,
+    `初步定位线索：${locator}`,
+    '',
+    '工作要求：',
+    '1. 先阅读该场景关联的完整业务流程、组件、状态管理和上下游调用，再开始修改。',
+    '2. 上述定位只来自插件能够读取到的部分代码，是调查起点，不代表完整项目上下文。',
+    '3. 请根据项目现有架构自行判断根因和实现方式，不要把这段描述当成具体代码修改方案。',
+    '4. 如果问题涉及界面文案，可以直接修改文案；修改后应让用户清楚知道发生了什么、有什么影响以及下一步能做什么。',
+    `5. 完成后验证：在「${finding.surface}」中不再出现上述现象，并且相关正常、异常和边界流程没有回归。`,
+  ].join('\n')
+}
+
 // ── 会话事件族（spec §5.4 / §R4）─────────────────────────────────────────────
 //
 // 单次问题的确认判定是**阶段性事实**，写入会话日志（SessionEventMap），

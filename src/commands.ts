@@ -176,11 +176,14 @@ function runSubcommand(invocation: CommandInvocation, configured: ConfiguredMode
         return { kind: 'error', text: '没有匹配到要判定的问题。' }
       }
       const label = verdict === 'rejected' ? '不是问题' : '问题成立'
+      const promptHint = verdict === 'confirmed_explicit'
+        ? '；可在报告卡片中复制现象导向的任务 Prompt 交给 AI'
+        : ''
       return {
         kind: 'success',
         text: outcome.applied.length === 1
-          ? `已记录「${outcome.applied[0]?.headline ?? ''}」为「${label}」`
-          : `已记录 ${outcome.applied.length} 条为「${label}」`,
+          ? `已记录「${outcome.applied[0]?.headline ?? ''}」为「${label}」${promptHint}`
+          : `已记录 ${outcome.applied.length} 条为「${label}」${promptHint}`,
       }
     }
 

@@ -21,7 +21,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型侧：加载 ChatNodeDataMap / SlotMap 合并（模块增强的目标必须在本程序中被引用）。
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { severityLabel, technicalYaml } from '../types'
+import { deliveryPrompt, severityLabel, technicalYaml } from '../types'
 import type { FindingStatus, UxFinding, UxMode } from '../types'
 import { UxReportNodeView } from './report-view'
 
@@ -42,6 +42,8 @@ export interface UxFindingView {
   level: string
   /** 折叠区展示与复制的结构化技术细节。 */
   technicalYaml: string
+  /** 用户确认问题后，可直接交给编码 AI 的现象导向任务 Prompt。 */
+  deliveryPrompt: string
   status: FindingStatus
 }
 
@@ -154,6 +156,7 @@ function viewData(state: UxReportState): UxReportChatData {
       description: finding.human.description,
       level: finding.technical.severity.level,
       technicalYaml: technicalYaml(finding),
+      deliveryPrompt: deliveryPrompt(finding),
       status: finding.status,
     })),
   }
