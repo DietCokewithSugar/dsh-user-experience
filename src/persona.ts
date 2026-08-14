@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { nielsenGuidance } from './heuristics'
 import { HUMAN_COPY_RULE } from './human-copy'
 import type { Persona, PersonaCapability, PersonaFile } from './types'
 
@@ -208,7 +209,8 @@ export function renderPersonaGuidance(personas: readonly Persona[]): string {
     '6. R-02（术语不一致）条件触发：仅当本轮没有一级 / 二级问题时才执行；术语判定持久化到 .ux/glossary.yml，后续只做增量判断。',
     '7. "发现的问题总数"不是目标，宁缺毋滥：拿不准的候选宁可丢弃，不要凑数。',
     '   证据等级必须如实标记：static=源码/CSS；rendered=真实页面截图/DOM/尺寸；interactive=按 persona 实际完成任务并记录步骤。',
-    '   R-10/R-12/R-13 至少需要 rendered，R-14 至少需要 interactive。浏览器不可用时退回 static，不得伪造高等级证据。',
+    '   规则目录定义了每条规则的最低证据等级。浏览器不可用时退回 static，不得伪造高等级证据。',
+    `   Nielsen 十项可用性原则是基础检查框架：${nielsenGuidance('zh-CN').join('；')}。`,
     '   输出语言优先跟随当前用户使用的语言，再跟随项目主 README；调用 ux_scan/ux_report 时显式传 language。',
     '',
     '报告是给两个读者看的（结构上已经分开，不要混着写）：',

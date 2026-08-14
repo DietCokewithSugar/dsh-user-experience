@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto'
 
 /** 指纹的三元组组成部分。 */
 export interface FingerprintParts {
-  /** 规则 ID（R-01 … R-14）。 */
+  /** 规则 ID（R-01 … R-27）。 */
   rule: string
   /** 符号路径：`file::symbol`，可再带一层最内层函数名。 */
   symbolPath: string
