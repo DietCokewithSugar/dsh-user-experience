@@ -33,7 +33,8 @@
 | Persona 初始化 | `/ux init` | 模型从 README / package.json / 路由结构生成 1-3 个画像草稿，**经用户确认后**写入 `.ux/personas.yml`；文件已存在时直接加载，不重复询问 |
 | Persona 上下文注入 | 自动 | 每次请求按当前项目注入生效画像与走查协议（对齐 AGENTS.md section provider 模式） |
 | 源码走查 | `/ux scan` | 先确定范围（架构说明优先，否则询问功能/流程），再逐 persona 独立走查、合并成一份报告；9 条高置信度规则，模型判断为主、AST 求证为辅 |
-| 问题确认闭环 | 报告卡片 | 每条 finding 带 locator 与「成立 / 不成立」按钮；判定写入会话日志，重放完整恢复 |
+| 问题确认闭环 | 报告卡片 | 卡片第一屏是人话——**在哪儿**（场景）、**发生了什么**（一句话）、**影响谁**，加「一级…四级问题」与「确认是问题 / 不是问题」按钮；判定写入会话日志，重放完整恢复 |
+| 技术细节折叠 | 报告卡片 | 文件位置、规则、判定依据、修复方向默认折叠；展开后可「复制给 AI」，把整段技术细节交给模型去改 |
 | 报告输出 | 自动 | Markdown 按 P0→P3 排序，共性问题（≥2 画像命中）在前；仅 confirmed 计入最终清单 |
 | 术语表 | 自动 | R-02 判定增量持久化到 `.ux/glossary.yml`，后续只做增量比对 |
 
@@ -102,7 +103,8 @@
 ```text
 /ux init                          # 初始化目标用户画像（草稿 → 确认 → 落盘）
 /ux scan 订单流程从选品到支付      # 发起走查（先定范围，再逐 persona 走查）
-# 报告卡片上逐条点击「成立 / 不成立」——仅 confirmed 计入最终清单
+# 报告卡片上逐条点击「确认是问题 / 不是问题」——仅确认成立的计入最终清单
+# 需要动手改时，展开卡片的「技术细节」→「复制给 AI」，把定位与修复方向整段交给模型
 ```
 
 ## 开发
@@ -122,6 +124,7 @@ pnpm test          # 冒烟测试（AST 引擎 / persona / glossary / 矩阵 / �
 - [x] README 安全提示（见上方「安装」）
 - [x] README 声明 v0.2 能力边界（React TS/JS + Vue 3、仅静态证据、不覆盖视觉类问题）
 - [x] v0.2 技术栈扩展说明文档（`dsh-user-experience-v0.2-spec.md`）
+- [x] v0.2.1 问题卡片话术层说明文档（`dsh-user-experience-v0.2.1-spec.md`）
 - [x] 锁定 DSH 依赖版本（developer preview）
 - [x] 仓库添加 **`dsh-plugin`** topic（官方发现机制）
 - [x] 向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，中英文 README 各加一行（站点合并后自动同步）——[PR #63 已合并](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63)，[文案更新 PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)

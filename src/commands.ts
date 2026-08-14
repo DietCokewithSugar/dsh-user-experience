@@ -65,6 +65,8 @@ function buildScanPrompt(userIntent: string): string {
     '',
     '三、铁律：',
     '- 每条 finding 必须带 locator（file 必填），指不到位置的丢弃；',
+    '- 每条 finding 必须写人话层：scene（在哪儿）、summary（发生了什么，一句话，不含文件名/规则 ID/代码术语）、'
+      + 'consequence（对用户的后果）——卡片第一屏给产品/运营看，技术细节折叠在后面交给 AI；',
     '- 拿不准的候选宁可丢弃，不要凑数；',
     '- R-02 术语检查仅当本轮没有 P0/P1 问题时才执行；',
     '- 报告只做"提醒开发者去看一眼"，不改代码。',

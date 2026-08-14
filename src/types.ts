@@ -103,6 +103,11 @@ export interface FindingEvidence {
 /**
  * 一条用户体验问题。severity 的 level 由 impact × reach 推导；
  * reach 由 persona_refs 的 share 之和推导（多 persona 合并时自然上升）。
+ *
+ * 字段分两层：`scene` / `summary` / `consequence` 是**人话层**（卡片与报告
+ * 的第一屏，非技术读者据此判断问题是否成立）；`evidence` / `suggestion` 是
+ * **技术层**（折叠展示，确认后交给 AI 修改）。人话层字段在重放缺字段的老
+ * 报告时由 human.ts 的兜底函数补齐。
  */
 export interface UxFinding {
   /** 报告内唯一 id（UX-0001 起）。 */
@@ -112,6 +117,12 @@ export interface UxFinding {
   category: FindingCategory
   /** 规则 ID（R-01 … R-09）。 */
   rule: string
+  /** 人话层：问题所在的场景/页面（如"管理员页面 · 用户列表"）。 */
+  scene: string
+  /** 人话层：一句话说明发生了什么（不含文件名、规则 ID、代码术语）。 */
+  summary: string
+  /** 人话层：对用户造成的后果（可选，一句话）。 */
+  consequence?: string
   severity: {
     impact: Impact
     reach: Reach
@@ -154,6 +165,11 @@ declare module '@deepseek-ai/dsh-session/types' {
       reportId: string
       /** 报告标题。 */
       title: string
+      /**
+       * 本轮涉及的画像 id → 名称。卡片用名称而不是 id 说"影响谁"；
+       * 事件仍以 id 为准，名称只是展示用快照（老事件可能没有该字段）。
+       */
+      personas?: Array<{ id: string; name: string }>
       /** 整份 finding 快照（创建时全部为 pending）。 */
       findings: UxFinding[]
     }

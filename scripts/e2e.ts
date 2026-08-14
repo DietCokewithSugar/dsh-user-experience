@@ -146,27 +146,42 @@ async function remove(id: string) {
         {
           rule: 'R-09', category: 'theme-adaptation', persona_refs: ['investor', 'ops'],
           impact: 'high', verified_by: 'ast', file: 'src/pages/Order.tsx', symbol: 'OrderList',
+          scene: '订单列表页', summary: '切到深色模式后，订单文字还是黑色，几乎看不见',
+          consequence: '晚上用深色模式的用户读不了订单，只能切回浅色',
           rationale: 'R-09 / className 写死 text-black 无 dark: 变体', suggestion: '改为主题变量或增加 dark: 变体',
         },
+        // 人话层留空 → 由 locator / 规则名兜底（模型敷衍、老报告重放同路径）
         {
           rule: 'R-06', persona_refs: ['investor'], impact: 'high', verified_by: 'model+ast',
-          file: 'src/pages/Order.tsx', symbol: 'OrderList', rationale: 'remove 的 fetch 无 catch', suggestion: '补充失败提示',
+          file: 'src/pages/Order.tsx', symbol: 'OrderList', scene: '   ', summary: '',
+          rationale: 'remove 的 fetch 无 catch', suggestion: '补充失败提示',
         },
-        // 同一 locator 同规则的第二条（来自另一个 persona）→ 应合并 persona_refs
+        // 同一 locator 同规则的第二条（来自另一个 persona）→ 应合并 persona_refs，
+        // 并把首条缺的 consequence 补上（人话层"首条为准，只补空"）
         {
           rule: 'R-06', persona_refs: ['ops'], impact: 'low', verified_by: 'model+ast',
-          file: 'src/pages/Order.tsx', symbol: 'OrderList', rationale: 'remove 的 fetch 无 catch', suggestion: '补充失败提示',
+          file: 'src/pages/Order.tsx', symbol: 'OrderList',
+          scene: '订单列表页', summary: '删除失败时页面没有任何提示',
+          consequence: '运营以为删掉了，其实没有，只能反复重试',
+          rationale: 'remove 的 fetch 无 catch', suggestion: '补充失败提示',
         },
         // 无 locator → 必须丢弃
-        { rule: 'R-01', persona_refs: ['investor'], impact: 'high', file: '', rationale: 'x', suggestion: 'y' },
+        {
+          rule: 'R-01', persona_refs: ['investor'], impact: 'high', file: '',
+          scene: '未知', summary: '未知', rationale: 'x', suggestion: 'y',
+        },
         // 未知规则 → 丢弃
-        { rule: 'R-99', persona_refs: ['investor'], impact: 'high', file: 'src/pages/Order.tsx', rationale: 'x', suggestion: 'y' },
+        {
+          rule: 'R-99', persona_refs: ['investor'], impact: 'high', file: 'src/pages/Order.tsx',
+          scene: '未知', summary: '未知', rationale: 'x', suggestion: 'y',
+        },
       ],
     },
     exec(),
   )
   const reportFindings = reportResult.findings as Array<{
-    id: string; persona_refs: string[]; severity: { impact: string; reach: string; level: string }; status: string
+    id: string; rule: string; persona_refs: string[]; scene: string; summary: string; consequence?: string
+    severity: { impact: string; reach: string; level: string }; status: string
   }>
   check('同 locator 同规则合并为一条', reportFindings.length === 2, JSON.stringify(reportFindings.map((f) => f.rule)))
   const merged = reportFindings.find((f) => f.rule === 'R-06')
@@ -179,9 +194,26 @@ async function remove(id: string) {
   check('报告标注 static 证据与视觉免责', String(reportResult.markdown).includes('static') && String(reportResult.markdown).includes('不覆盖视觉类问题'))
   check('报告含汇总（confirmed 0）', String(reportResult.markdown).includes('0 / 2'))
 
+  // ── 2b. 人话层：卡片/报告第一屏说"在哪儿、发生了什么" ────────────────────────
+  check('人话层字段随 finding 落定', r09?.scene === '订单列表页'
+    && String(r09?.summary).includes('深色模式') && String(r09?.consequence).includes('读不了订单'),
+  JSON.stringify(r09))
+  check('人话层留空时按 locator 兜底 scene', merged?.scene === 'OrderList', JSON.stringify(merged?.scene))
+  check('人话层留空时按规则名兜底 summary', String(merged?.summary).includes('有 success 无 error'), JSON.stringify(merged?.summary))
+  check('合并时补上首条缺的 consequence', String(merged?.consequence).includes('反复重试'), JSON.stringify(merged?.consequence))
+  check('报告以人话开头（严重度中文 + 场景）', String(reportResult.markdown).includes('**【一级问题】订单列表页**'),
+    String(reportResult.markdown).split('\n').find((line) => line.includes('一级问题')))
+  check('技术细节收在子条目里', String(reportResult.markdown).includes('技术细节 · UX-')
+    && String(reportResult.markdown).includes('    - 判定依据：'))
+  check('汇总用中文等级计数', String(reportResult.markdown).includes('一级问题 × '))
+
   // 会话事件落库
   const reportEvent = session.events.find((event) => event.type === 'ux/report')
   check('ux/report 事件写入会话日志', reportEvent !== undefined && reportEvent.data.findings.length === 2)
+  const eventPersonas = reportEvent !== undefined && reportEvent.type === 'ux/report' ? reportEvent.data.personas : undefined
+  check('ux/report 事件带画像名称快照（卡片用名字而不是 id）',
+    eventPersonas?.some((persona) => persona.id === 'investor' && persona.name === '个人投资者') === true,
+    JSON.stringify(eventPersonas))
 
   // ── 3. /ux judge：确认判定写回 ──────────────────────────────────────────────
   console.log('/ux judge')
@@ -260,12 +292,94 @@ async function remove(id: string) {
     const viewNode = uxReportDefinition.buildViewNode?.(
       { key: 'k', kind: 'ux-report', id: 'r', matches: [], start: undefined, state: updated, current: new Map() },
     )
-    const viewData = (viewNode?.data ?? {}) as { findings: Array<{ status: string }> }
+    const viewData = (viewNode?.data ?? {}) as {
+      findings: Array<{
+        status: string; scene: string; summary: string; levelName: string; levelHint: string
+        personaNames: string[]; ruleName: string; categoryName: string; evidence: string
+      }>
+    }
     check('buildViewNode 输出渲染数据（含确认状态）', viewData.findings.some((f) => f.status === 'confirmed'))
     check('节点 kind 为 ux-report', (viewNode as { kind?: string })?.kind === 'ux-report')
+
+    // 卡片第一屏：中文等级 + 场景 + 一句话 + 画像名称（不是 id）
+    check('卡片给出中文严重度与解释', viewData.findings.some((f) => f.levelName === '一级问题' && f.levelHint.length > 0),
+      JSON.stringify(viewData.findings.map((f) => f.levelName)))
+    check('卡片给出场景与人话摘要', viewData.findings.some((f) => f.scene === '订单列表页' && f.summary.includes('深色模式')),
+      JSON.stringify(viewData.findings.map((f) => [f.scene, f.summary])))
+    check('卡片用画像名称而不是 id', viewData.findings.some((f) => f.personaNames.includes('个人投资者')),
+      JSON.stringify(viewData.findings.map((f) => f.personaNames)))
+    check('技术细节字段仍在（折叠区渲染用）', viewData.findings.every((f) => f.ruleName.length > 0 && f.categoryName.length > 0 && f.evidence.includes('static')),
+      JSON.stringify(viewData.findings.map((f) => [f.ruleName, f.categoryName, f.evidence])))
   } else {
     check('存在 start/update 事件配对', false, JSON.stringify(reportEvents.map((e) => e.type)))
   }
+
+  // ── 6b. 老事件重放（无 personas / 无人话层）：卡片仍说得出"在哪儿、发生了什么"──
+  console.log('老报告重放兜底')
+  const legacyMatch = {
+    role: 'start',
+    view: undefined,
+    location: { kind: 'session' },
+    event: {
+      type: 'ux/report',
+      seq: 1,
+      data: {
+        reportId: 'ux-rpt-legacy',
+        title: '老报告',
+        findings: [{
+          id: 'UX-0001', persona_refs: ['investor'], category: 'state-coverage', rule: 'R-04',
+          severity: { impact: 'high', reach: 'narrow', level: 'P1' },
+          evidence: {
+            level: 'static', verified_by: 'model',
+            locator: { file: 'src/pages/Admin/index.tsx' },
+            rationale: 'remove 调用路径上不存在确认交互节点',
+          },
+          suggestion: '删除前增加二次确认', status: 'pending',
+        }],
+      },
+    },
+  }
+  const legacyState = uxReportDefinition.start(
+    { key: 'k', kind: 'ux-report', id: 'ux-rpt-legacy', matches: [], start: undefined, state: undefined, current: new Map() },
+    legacyMatch as never,
+    { previous: () => undefined },
+  )
+  const legacyView = uxReportDefinition.buildViewNode?.(
+    { key: 'k', kind: 'ux-report', id: 'ux-rpt-legacy', matches: [], start: undefined, state: legacyState, current: new Map() },
+  )
+  const legacyFinding = ((legacyView?.data ?? {}) as {
+    findings: Array<{ scene: string; summary: string; levelName: string; personaNames: string[] }>
+  }).findings[0]
+  check('老事件无 scene → 由 index.tsx 的目录名兜底', legacyFinding?.scene === 'Admin', JSON.stringify(legacyFinding?.scene))
+  check('老事件无 summary → 由规则名 + 建议兜底', String(legacyFinding?.summary).includes('不可逆操作缺二次确认'), JSON.stringify(legacyFinding?.summary))
+  check('老事件无 personas → 画像回退到 id', legacyFinding?.personaNames.includes('investor') === true, JSON.stringify(legacyFinding?.personaNames))
+  check('老事件严重度仍翻译成中文', legacyFinding?.levelName === '二级问题', JSON.stringify(legacyFinding?.levelName))
+
+  // ── 7. 卡片渲染：第一屏是人话，技术细节默认折叠 ─────────────────────────────
+  console.log('报告卡片渲染')
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const { createElement } = await import('react')
+  const { UxReportNodeView } = await import('../src/client/report-view')
+  const cardState = uxReportDefinition.start(
+    { key: 'k', kind: 'ux-report', id: reportId, matches: [], start: undefined, state: undefined, current: new Map() },
+    { event: reportEvent, view: undefined, role: 'start', location: { kind: 'session' } } as never,
+    { previous: () => undefined },
+  )
+  const cardNode = uxReportDefinition.buildViewNode?.(
+    { key: 'k', kind: 'ux-report', id: reportId, matches: [], start: undefined, state: cardState, current: new Map() },
+  )
+  const cardHtml = renderToStaticMarkup(createElement(UxReportNodeView, {
+    node: cardNode,
+    judge: async () => null,
+  } as never))
+  check('卡片显示中文严重度而不是 P0', cardHtml.includes('一级问题') && !cardHtml.includes('>P0<'))
+  check('卡片显示场景与人话摘要', cardHtml.includes('订单列表页') && cardHtml.includes('深色模式'))
+  check('卡片显示影响与影响用户（画像名称）', cardHtml.includes('影响：') && cardHtml.includes('影响用户：个人投资者'))
+  check('卡片提供人工确认按钮', cardHtml.includes('确认是问题') && cardHtml.includes('不是问题'))
+  check('技术细节默认折叠（判定依据不在首屏）', !cardHtml.includes('判定依据：') && cardHtml.includes('技术细节（文件位置'),
+    cardHtml.slice(0, 200))
+  check('折叠开关标记 aria-expanded=false', cardHtml.includes('aria-expanded="false"'))
+  check('卡片提供整份复制入口（交给 AI）', cardHtml.includes('复制全部技术细节（2 条）'))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
