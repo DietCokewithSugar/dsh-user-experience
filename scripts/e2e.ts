@@ -347,6 +347,10 @@ async function remove(id: string) {
     JSON.stringify(live === undefined ? [] : resolveSelector(live, '三级以下')))
   check('「全部」批量选择器命中所有条目',
     live !== undefined && resolveSelector(live, '全部').length === reportFindings.length)
+  check('英文 “below level three” 命中三级/四级问题',
+    live !== undefined && JSON.stringify(resolveSelector(live, 'below level three')) === JSON.stringify([minorId]))
+  check('英文 “item 2” 命中第二条',
+    live !== undefined && resolveSelector(live, 'item 2')[0] === reportFindings[1]?.id)
 
   // ── 3b. /ux judge 脚本接口：卡片按钮的通道（显式 reportId + 逗号分隔批量）──
   console.log('/ux judge（脚本接口）')

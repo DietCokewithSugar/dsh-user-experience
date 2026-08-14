@@ -68,21 +68,26 @@ export function currentReport(session: Session, reportId?: string): CurrentRepor
 
 const LEVEL_BY_WORD: Record<string, string> = {
   一级: 'P0', 二级: 'P1', 三级: 'P2', 四级: 'P3',
+  one: 'P0', two: 'P1', three: 'P2', four: 'P3',
 }
 
 const ALL_WORDS = new Set(['全部', '所有', '都', 'all', '*'])
 
 /** 「三级以下」「三级及以下」这类批量表达。 */
 const BELOW = /^([一二三四])级(?:问题)?(?:及)?以下$/u
+const BELOW_EN_PREFIX = /^below\s+(?:level\s+)?(one|two|three|four)$/iu
+const BELOW_EN_SUFFIX = /^(?:level\s+)?(one|two|three|four)\s+(?:and|or)\s+below$/iu
 
 /** 「第 2 条」「2」「UX-0002」这类单条表达。 */
 const ORDINAL = /^第?\s*(\d+)\s*条?$/u
+const ORDINAL_EN = /^(?:(?:item|finding|issue)\s+|#)(\d+)(?:st|nd|rd|th)?$/iu
 
 /**
  * 把一个自然语言选择器解析成 finding id 列表。
  *
- * 支持：序号（`2` / `第 2 条`）、finding id（`UX-0002`）、批量词
- * （`全部` / `三级以下` / `一级`）、以及 headline / surface 的关键词匹配。
+ * 支持：序号（`2` / `第 2 条` / `item 2`）、finding id（`UX-0002`）、
+ * 批量词（`全部` / `三级以下` / `below level three` / `all`），以及
+ * headline / surface 的关键词匹配。
  * @param report - 当前报告。
  * @param selector - 一个选择器文本。
  * @returns 命中的 finding id；无法解析时为空数组。
@@ -92,7 +97,7 @@ export function resolveSelector(report: CurrentReport, selector: string): string
   if (value.length === 0) return []
   if (ALL_WORDS.has(value.toLowerCase())) return report.findings.map((finding) => finding.id)
 
-  const below = BELOW.exec(value)
+  const below = BELOW.exec(value) ?? BELOW_EN_PREFIX.exec(value) ?? BELOW_EN_SUFFIX.exec(value)
   if (below !== null) {
     const floor = LEVEL_BY_WORD[below[1] ?? ''] ?? 'P2'
     return report.findings
@@ -101,14 +106,15 @@ export function resolveSelector(report: CurrentReport, selector: string): string
   }
 
   const levelWord = /^([一二三四])级(?:问题)?$/u.exec(value)
+    ?? /^(?:level\s+)?(one|two|three|four)$/iu.exec(value)
   if (levelWord !== null) {
-    const level = LEVEL_BY_WORD[levelWord[1] ?? '']
+    const level = LEVEL_BY_WORD[(levelWord[1] ?? '').toLowerCase()]
     return report.findings
       .filter((finding) => finding.technical.severity.level === level)
       .map((finding) => finding.id)
   }
 
-  const ordinal = ORDINAL.exec(value)
+  const ordinal = ORDINAL.exec(value) ?? ORDINAL_EN.exec(value)
   if (ordinal !== null) {
     const index = Number.parseInt(ordinal[1] ?? '', 10) - 1
     const finding = report.findings[index]
@@ -186,8 +192,8 @@ export function uxJudgeTool(): ToolDefinition {
     name: 'ux_judge',
     description: [
       '记录用户对 UX 报告中问题的判定（成立 / 不成立）。',
-      '用户说「第 2 条不成立」「这几条都对」「三级以下全部忽略」「删除那条我确认」时调用本工具。',
-      'targets 直接写用户的说法即可：序号（2）、批量词（全部 / 三级以下 / 一级）、或问题里的关键词。',
+      '用户说「第 2 条不成立」「三级以下全部忽略」，或 “item 2 is not an issue” / “ignore below level three” 时调用本工具。',
+      'targets 直接写用户的说法即可：序号（2 / item 2）、批量词（全部 / all / 三级以下 / below level three）或问题关键词。',
       '本工具自己定位当前报告——不要向用户索要任何报告 ID 或问题编号。',
     ].join(' '),
     parameters: {
