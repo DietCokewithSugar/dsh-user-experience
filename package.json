@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "DeepSeek Harness UX walkthrough plugin: persona-driven source-code UX review for React + TypeScript projects",
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
