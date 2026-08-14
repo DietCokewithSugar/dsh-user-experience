@@ -2,9 +2,12 @@
  * `ux_scan` 工具（spec §6 R3）：源码走查的第一阶段。
  *
  * 职责边界（模型判断为主、AST 求证为辅）：
- * - 校验技术栈（仅 React + TypeScript；不支持时明确告知，不给低质量猜测）；
+ * - 校验技术栈（React + TypeScript / React + JavaScript / Vue 3；不支持时
+ *   明确告知，不给低质量猜测）；
  * - 按给定范围收集源文件（范围建议由 R6 流程在调用前完成）；
- * - 运行 AST 规则引擎，产出带 locator 的结构化候选证据；
+ * - 按技术栈分派解析引擎（React 源码走 TypeScript 编译器 API；Vue SFC 走
+ *   @vue/compiler-sfc + compiler-dom，script 块复用 TS 引擎），产出带
+ *   locator 的结构化候选证据；
  * - 返回给模型：文件清单 + 候选 + 既有术语表 + 后续步骤指引。
  *
  * 工具**不做**语义判断、不直接产出 finding：模型读候选、核实代码、按 persona
@@ -13,12 +16,15 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import ts from 'typescript'
 import { extractCandidates } from './ast'
 import { loadGlossary } from './glossary'
 import { detectStack, gatherFiles, readSourceFile, suggestSourceRoots } from './project'
+import type { StackKind } from './project'
 import { RULES } from './rules'
 import type { UxConfig } from './config'
 import type { AstCandidate } from './ast'
+import { extractVueCandidates } from './vue'
 
 /** 单文件读取上限（防超大文件拖垮扫描）。 */
 const MAX_FILE_BYTES = 512 * 1024
@@ -59,7 +65,7 @@ function renderScanResult(result: ScanResult): string {
   if (!result.supported) {
     return [
       `【不支持的技术栈】${result.stack}`,
-      result.reason ?? 'v0.1 仅支持 React + TypeScript。',
+      result.reason ?? '当前版本支持 React（TypeScript / JavaScript）与 Vue 3。',
       '请明确告知用户不支持，不要给出低质量猜测。',
     ].join('\n')
   }
@@ -100,10 +106,10 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
   return defineTool({
     name: 'ux_scan',
     description: [
-      '对 React+TypeScript 源码做 UX 走查的结构化扫描（第一阶段：AST 求证候选证据，模型判断为主）。',
+      '对 React（TypeScript / JavaScript）与 Vue 3 源码做 UX 走查的结构化扫描（第一阶段：AST 求证候选证据，模型判断为主）。',
       '返回文件清单与带 locator 的候选证据，供你读码核实后按当前 persona 判定。',
       'R-09（深色模式）候选由 AST 直接求证（verified_by=ast）可直接采用；其余候选需核实。',
-      '非 React+TypeScript 项目会返回 supported=false，需明确告知用户不支持。',
+      '不支持的技术栈（Svelte / Vue 2 / 小程序等）会返回 supported=false，需明确告知用户不支持。',
       '扫描完成后阅读可疑代码、判定候选、补记语义问题，最后调用 ux_report 汇总定稿。',
     ].join(' '),
     parameters: {
@@ -182,7 +188,12 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
           guidance: ['告知用户不支持的原因（spec 边界场景 9），不要给出低质量猜测。'],
         } satisfies ScanResult
       }
-      const gathered = gatherFiles(cwd, args.paths ?? [], config.excludePatterns, config.maxScanFiles)
+      const stackKind: StackKind = stack.kind ?? 'react-ts'
+      const gathered = gatherFiles(cwd, args.paths ?? [], config.excludePatterns, config.maxScanFiles, stackKind)
+      const options = {
+        maxPerRule: config.maxCandidatesPerRule,
+        maxPerFile: config.maxCandidatesPerFile,
+      }
       const candidates: AstCandidate[] = []
       for (const file of gathered.files) {
         if (candidates.length >= MAX_CANDIDATES_TOTAL) break
@@ -192,10 +203,18 @@ export function uxScanTool(config: UxConfig): ToolDefinition {
         } catch {
           continue
         }
-        const extracted = extractCandidates(file.path, source, {
-          maxPerRule: config.maxCandidatesPerRule,
-          maxPerFile: config.maxCandidatesPerFile,
-        })
+        // 按技术栈分派引擎：
+        // - Vue SFC：SFC 拆分 + 模板 AST（script 块内部复用 TS 引擎）；
+        // - Vue 项目的独立 .ts/.js 模块：按普通 TS 解析（无 JSX）；
+        // - React 项目：统一 TSX 解析（.js 也可能含 JSX，TSX 是其超集）。
+        let extracted: AstCandidate[]
+        if (stackKind === 'vue' && file.path.endsWith('.vue')) {
+          extracted = extractVueCandidates(file.path, source, options)
+        } else if (stackKind === 'vue') {
+          extracted = extractCandidates(file.path, source, options, ts.ScriptKind.TS)
+        } else {
+          extracted = extractCandidates(file.path, source, options, ts.ScriptKind.TSX)
+        }
         candidates.push(...extracted.slice(0, MAX_CANDIDATES_TOTAL - candidates.length))
       }
       const glossary = loadGlossary(cwd).terms

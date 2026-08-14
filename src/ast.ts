@@ -39,34 +39,40 @@ export interface AstExtractOptions {
 }
 
 /** 深色模式相关的 Tailwind 颜色类（含任意值），不含纯布局类如 text-center。 */
-const COLOR_CLASS = /^(?:text|bg|border|ring|outline|fill|stroke|from|to|via|accent|caret|decoration|divide|placeholder|shadow)-(?:[a-z]+-\d+(?:\/\d+)?|\[(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))[^\]]*\]|black|white)(?:\/\d+)?$/u
+export const COLOR_CLASS = /^(?:text|bg|border|ring|outline|fill|stroke|from|to|via|accent|caret|decoration|divide|placeholder|shadow)-(?:[a-z]+-\d+(?:\/\d+)?|\[(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))[^\]]*\]|black|white)(?:\/\d+)?$/u
 
 /** 硬编码颜色字面量。 */
-const COLOR_LITERAL = /^(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))$/u
+export const COLOR_LITERAL = /^(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))$/u
+
+/** 硬编码颜色字面量的子串搜索版本（Vue :style 绑定等整段表达式内检索）。 */
+export const COLOR_LITERAL_SEARCH = /#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/u
 
 /** 错误文案中的"行动指引"词。 */
-const ACTION_WORD = /重试|再试|刷新|稍后|点击|联系|查看|返回|取消|关闭|retry|refresh|try again|reload|contact|dismiss|undo|重连/u
+export const ACTION_WORD = /重试|再试|刷新|稍后|点击|联系|查看|返回|取消|关闭|retry|refresh|try again|reload|contact|dismiss|undo|重连/u
 
 /** 泛化的确认文案（无信息量）。 */
-const GENERIC_CONFIRM = /^(确定|确认|提交|继续|知道了|好的|OK|ok|Yes|yes|Submit|submit|Confirm|confirm|Yes,? I'?m sure)$/u
+export const GENERIC_CONFIRM = /^(确定|确认|提交|继续|知道了|好的|OK|ok|Yes|yes|Submit|submit|Confirm|confirm|Yes,? I'?m sure)$/u
 
 /** 截断 / 占位兜底的信号。 */
-const TRUNCATION_PATTERN = /truncate|ellipsis|clamp|line-clamp|text-overflow|word-break|break-all|overflow:\s*hidden|white-space:\s*nowrap/u
+export const TRUNCATION_PATTERN = /truncate|ellipsis|clamp|line-clamp|text-overflow|word-break|break-all|overflow:\s*hidden|white-space:\s*nowrap/u
 
 /** 文件内出现任意确认交互的信号。 */
-const CONFIRM_PATTERN = /confirm\(|Confirm|Dialog|Popconfirm|Modal\.|二次确认/u
+export const CONFIRM_PATTERN = /confirm\(|Confirm|Dialog|Popconfirm|Modal\.|二次确认/u
 
 /** 破坏性操作调用名。 */
-const DESTRUCTIVE_CALL = /^(?:handle)?(?:delete|remove|clear|reset|drop|destroy|wipe)\w*$/iu
+export const DESTRUCTIVE_CALL = /^(?:handle)?(?:delete|remove|clear|reset|drop|destroy|wipe)\w*$/iu
 
 /** 提交类异步处理器名。 */
-const SUBMIT_HANDLER = /submit|save|confirm|delete|remove/iu
+export const SUBMIT_HANDLER = /submit|save|confirm|delete|remove/iu
 
 /** 函数体中出现"空态覆盖"的信号。 */
-const EMPTY_PATTERN = /(?:\.length\s*(?:===|==|!==|!=|<=|>=|<|>)\s*0)|!\s*[\w[\].]*\.length|empty|isEmpty|hasData|暂无|空数据|空态|无数据|no data|no results|isBlank/iu
+export const EMPTY_PATTERN = /(?:\.length\s*(?:===|==|!==|!=|<=|>=|<|>)\s*0)|!\s*[\w[\].]*\.length|empty|isEmpty|hasData|暂无|空数据|空态|无数据|no data|no results|isBlank/iu
 
 /** 函数体中出现"加载分支"的信号（作用于条件表达式条件文本）。 */
-const LOADING_PATTERN = /loading|pending|fetching|submitting/iu
+export const LOADING_PATTERN = /loading|pending|fetching|submitting/iu
+
+/** 类 label 属性名（术语候选素材）。 */
+export const LABEL_ATTRS = new Set(['placeholder', 'aria-label', 'label', 'title', 'alt'])
 
 interface FunctionFrame {
   symbol: string
@@ -499,8 +505,6 @@ function jsxVisibleText(node: ts.Node): string | undefined {
   return raw
 }
 
-const LABEL_ATTRS = new Set(['placeholder', 'aria-label', 'label', 'title', 'alt'])
-
 function isLabelLikeAttribute(node: ts.Node): boolean {
   if (!ts.isJsxAttribute(node) || node.initializer === undefined) return false
   if (!ts.isIdentifier(node.name) || !LABEL_ATTRS.has(node.name.text)) return false
@@ -517,9 +521,17 @@ function isJsxTextChild(node: ts.Node): boolean {
  * 从单个文件提取候选证据。
  * @param file - 相对项目根路径（写入候选的 locator）。
  * @param source - 文件文本。
+ * @param options - 候选数量上限配置。
+ * @param scriptKind - 解析方式：React 源码一律 TSX（.js 也可能含 JSX）；
+ *   Vue `<script>` 块用 TS（无 JSX，lang=jsx/tsx 除外）。
  */
-export function extractCandidates(file: string, source: string, options: AstExtractOptions): AstCandidate[] {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+export function extractCandidates(
+  file: string,
+  source: string,
+  options: AstExtractOptions,
+  scriptKind: ts.ScriptKind = ts.ScriptKind.TSX,
+): AstCandidate[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind)
   const ctx: WalkContext = {
     sourceFile,
     file,

@@ -2,9 +2,9 @@
 
 # dsh-user-experience
 
-> A UX walkthrough plugin for DeepSeek Harness (DSH): **finds potential UX issues in your project — automatically walks through React/TypeScript source code, pinpoints problems, and suggests fixes.**
+> A UX walkthrough plugin for DeepSeek Harness (DSH): **finds potential UX issues in your project — automatically walks through React (TypeScript / JavaScript) and Vue 3 source code, pinpoints problems, and suggests fixes.**
 >
-> v0.1 scope: React + TypeScript source only, static evidence only, no visual issues.
+> v0.2 scope: React + TypeScript / React + JavaScript / Vue 3 supported, static evidence only, no visual issues.
 
 Existing automated checks (axe, Lighthouse) can only verify absolute rules — contrast ratio, missing alt text. But UX issues are inherently **relative**: a confirmation dialog before deleting protects an occasional user but wastes the time of an operator who processes hundreds of records a day. Without knowing *who it's for*, a "UX issue" cannot be defined.
 
@@ -12,12 +12,19 @@ This plugin makes **target user personas** a prerequisite for the walkthrough: e
 
 ---
 
-## Scope (explicitly out of scope in v0.1)
+## Scope (explicitly out of scope in v0.2)
 
-- **React + TypeScript** source only (clearly reports unsupported when another stack is detected)
+| Supported | Parsing engine |
+|---|---|
+| React + TypeScript (.ts / .tsx) | TypeScript compiler API (TSX) |
+| React + JavaScript (.js / .jsx) | Same engine; .js may contain JSX, always parsed as TSX |
+| Vue 3 (.vue SFC) | `@vue/compiler-sfc` block splitting + `@vue/compiler-dom` template AST; `<script>` / `<script setup>` blocks reuse the TypeScript engine, with line numbers remapped to the whole .vue file |
+
+**Explicitly unsupported** (reported as-is, no low-quality guesses): Svelte, Vue 2 (SFC syntax is incompatible with @vue/compiler-sfc), mini-programs (.wxml), etc. See [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md) for the extension details.
+
 - Evidence level is fixed at **static** (source-code evidence); **no visual issues**: contrast, hit-target size, text truncation, focus order
 - No auto-fix, no code changes: suggestions only ("a nudge for the developer to look", not a verdict)
-- Input is source code only; website input (v0.2) and design-mockup input (v0.3) are reserved roadmap items
+- Input is source code only; website input (v0.3) and design-mockup input (v0.4) are reserved roadmap items
 
 ## Features
 
@@ -113,7 +120,8 @@ pnpm test          # smoke tests (AST engine / persona / glossary / matrix / end
 ## Publish checklist
 
 - [x] README security note (see Installation above)
-- [x] README declares the v0.1 scope (source only, static evidence only, no visual issues)
+- [x] README declares the v0.2 scope (React TS/JS + Vue 3, static evidence only, no visual issues)
+- [x] v0.2 stack-extension spec (`dsh-user-experience-v0.2-spec.md`)
 - [x] Pinned DSH dependency versions (developer preview)
 - [x] Repo has the **`dsh-plugin`** topic (official discovery mechanism)
 - [x] PR to [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin), one line each in the English and Chinese READMEs (auto-synced to the site after merge) — [PR #63 merged](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63), [copy update PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)

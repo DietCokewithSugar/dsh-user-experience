@@ -7,10 +7,12 @@
  * glossary 增量合并、技术栈探测、严重度矩阵、插件 apply 注册接线。
  */
 
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { extractCandidates } from '../src/ast'
+import { extractVueCandidates } from '../src/vue'
 import { mergeGlossary, loadGlossary } from '../src/glossary'
 import { writePersonas, loadPersonas } from '../src/persona'
 import { detectStack, gatherFiles } from '../src/project'
@@ -163,12 +165,108 @@ try {
   console.log('项目探测')
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { react: '18' } }))
   writeFileSync(join(root, 'tsconfig.json'), '{}')
-  check('React+TS 项目 supported', detectStack(root).supported === true, JSON.stringify(detectStack(root)))
-  const gathered = gatherFiles(root, ['src'], [], 100)
+  const reactTsStack = detectStack(root)
+  check('React+TS 项目 supported 且 kind=react-ts', reactTsStack.supported === true && reactTsStack.kind === 'react-ts', JSON.stringify(reactTsStack))
+  const gathered = gatherFiles(root, ['src'], [], 100, 'react-ts')
   check('无 src 目录时收集为空', gathered.files.length === 0)
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { vue: '3' } }))
-  const stack = detectStack(root)
-  check('Vue 项目明确不支持', stack.supported === false && stack.stack.includes('Vue'), JSON.stringify(stack))
+
+  // React + JavaScript：react 依赖、无 tsconfig、有 .jsx 源文件。
+  rmSync(join(root, 'tsconfig.json'), { force: true })
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { react: '18' } }))
+  mkdirSync(join(root, 'src'), { recursive: true })
+  writeFileSync(join(root, 'src', 'App.jsx'), `
+export function App() {
+  return <div className="text-red-500 bg-white">持仓</div>
+}
+`)
+  writeFileSync(join(root, 'src', 'types.d.ts'), 'export interface X { a: number }\n')
+  const reactJsStack = detectStack(root)
+  check('React+JS 项目 supported 且 kind=react-js', reactJsStack.supported === true && reactJsStack.kind === 'react-js', JSON.stringify(reactJsStack))
+  const jsxGathered = gatherFiles(root, ['src'], [], 100, 'react-js')
+  check('.jsx 文件被收集（React+JS）', jsxGathered.files.length === 1 && jsxGathered.files[0]?.path === 'src/App.jsx', JSON.stringify(jsxGathered.files))
+  check('.d.ts 被跳过（React+JS）', !jsxGathered.files.some((f) => f.path.endsWith('.d.ts')))
+  const jsxCandidates = extractCandidates('src/App.jsx', readFileSync(join(root, 'src', 'App.jsx'), 'utf8'), { maxPerRule: 5, maxPerFile: 30 }, ts.ScriptKind.TSX)
+  check('.jsx 引擎提取 R-09（text-red-500 无 dark:）', jsxCandidates.some((c) => c.rule === 'R-09' && c.verified_by === 'ast'), JSON.stringify(jsxCandidates.map((c) => c.rule)))
+
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { vue: '3.5.0' } }))
+  const vueStack = detectStack(root)
+  check('Vue 3 项目 supported 且 kind=vue', vueStack.supported === true && vueStack.kind === 'vue', JSON.stringify(vueStack))
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { vue: '2.7.16' } }))
+  const vue2Stack = detectStack(root)
+  check('Vue 2 项目明确不支持', vue2Stack.supported === false && vue2Stack.stack.includes('Vue 2'), JSON.stringify(vue2Stack))
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'p', dependencies: { vue: '3.5.0' } }))
+
+  // ── 5b. Vue SFC 引擎 ─────────────────────────────────────────────────────────
+  console.log('Vue SFC 引擎')
+  const VUE_SFC = `<script setup lang="ts">
+import { ref } from 'vue'
+
+const items = ref<string[]>([])
+const loading = ref(true)
+const error = ref('')
+
+async function removeItem(id: string) {
+  await fetch('/api/items/' + id, { method: 'DELETE' })
+  items.value = []
+}
+
+function load() {
+  fetch('/api/list').catch(() => {
+    console.log('x')
+  })
+}
+
+function confirmRemove() {
+  Modal.confirm('确定')
+}
+</script>
+
+<template>
+  <div>
+    <h1 class="text-red-500 bg-white">持仓</h1>
+    <p>账户信息</p>
+    <span>帐号设置</span>
+    <div v-if="error" class="error-tip">加载失败</div>
+    <div v-if="loading">加载中</div>
+    <ul>
+      <li v-for="item in items" :key="item.id">{{ item.name }}</li>
+    </ul>
+    <a-popconfirm title="确定" ok-text="确定">
+      <button @click="removeItem('1')">删除</button>
+    </a-popconfirm>
+    <button class="submit-btn" @click="clearAll()">清空</button>
+    <button @click="save">保存</button>
+    <div :class="isDark ? 'text-black' : 'bg-white'">状态</div>
+    <div :style="{ color: '#ffffff' }">持仓</div>
+  </div>
+</template>
+`
+  writeFileSync(join(root, 'src', 'OrderList.vue'), VUE_SFC)
+  const vueGathered = gatherFiles(root, ['src'], [], 100, 'vue')
+  check('Vue 栈收集 .vue 文件', vueGathered.files.some((f) => f.path.endsWith('.vue')), JSON.stringify(vueGathered.files))
+  const vueCandidates = extractVueCandidates('src/OrderList.vue', VUE_SFC, { maxPerRule: 5, maxPerFile: 30 })
+  const vueByRule = new Map<string, number>()
+  for (const candidate of vueCandidates) vueByRule.set(candidate.rule, (vueByRule.get(candidate.rule) ?? 0) + 1)
+  const fileLines = VUE_SFC.split('\n').length
+  const lineOfText = (text: string): number => VUE_SFC.split('\n').findIndex((line) => line.includes(text)) + 1
+  const rulesHit = [...vueByRule.keys()].sort()
+  check('Vue SFC 覆盖全部 9 条规则', JSON.stringify(rulesHit) === JSON.stringify(['R-01', 'R-02', 'R-03', 'R-04', 'R-05', 'R-06', 'R-07', 'R-08', 'R-09']), JSON.stringify(rulesHit))
+  check('R-09 全部 verified_by=ast（class/:class/:style）', vueCandidates.filter((c) => c.rule === 'R-09').length >= 3 && vueCandidates.filter((c) => c.rule === 'R-09').every((c) => c.verified_by === 'ast'), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-09')))
+  check('R-04 确认上下文内的删除按钮不误报（a-popconfirm 包裹）', !vueCandidates.some((c) => c.rule === 'R-04' && c.snippet.includes('removeItem')), vueCandidates.filter((c) => c.rule === 'R-04').map((c) => c.snippet).join('|'))
+  check('R-04 无确认的清空按钮命中', vueCandidates.some((c) => c.rule === 'R-04' && c.snippet.includes('clearAll')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-04')))
+  check('R-05 有 loading 无 empty 命中（模板级）', vueCandidates.some((c) => c.rule === 'R-05'), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-05').map((c) => c.note)))
+  check('R-06 script 块 await 无 catch 命中', vueCandidates.some((c) => c.rule === 'R-06' && c.snippet.includes('await fetch')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-06').map((c) => c.snippet)))
+  check('R-07 提交按钮无 pending 锁定命中', vueCandidates.filter((c) => c.rule === 'R-07').length >= 2, JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-07').map((c) => c.snippet)))
+  check('R-08 插值直接渲染 item.name 命中', vueCandidates.some((c) => c.rule === 'R-08' && c.snippet.includes('item.name')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-08')))
+  check('R-01 错误分支无行动指引命中（加载失败）', vueCandidates.some((c) => c.rule === 'R-01' && c.snippet.includes('加载失败')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-01').map((c) => c.snippet)))
+  check('R-03 泛化确认文案命中（popconfirm + Modal.confirm）', (vueByRule.get('R-03') ?? 0) >= 2, JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-03').map((c) => c.snippet)))
+  check('R-02 术语候选提取（账户/帐号）', vueCandidates.filter((c) => c.rule === 'R-02').some((c) => c.snippet.includes('账户') || c.snippet.includes('帐号')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-02').map((c) => c.snippet)))
+  // 行号平移：script 候选与 template 候选都指向整个 .vue 文件的真实行。
+  check('template 候选行号平移到文件行（text-red-500）', vueCandidates.some((c) => c.rule === 'R-09' && c.line === lineOfText('text-red-500')), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-09').map((c) => `${c.line}:${c.snippet}`)))
+  check('script 候选行号平移到文件行（await fetch）', vueCandidates.some((c) => c.rule === 'R-06' && c.line === lineOfText("await fetch('/api/items/")), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-06').map((c) => `${c.line}:${c.snippet}`)))
+  check('所有候选行号不越界', vueCandidates.every((c) => c.line === undefined || (c.line >= 1 && c.line <= fileLines)), JSON.stringify(vueCandidates.filter((c) => c.line !== undefined && c.line > fileLines)))
+  check('template 候选 symbol = 组件名', vueCandidates.filter((c) => c.rule === 'R-09').every((c) => c.symbol === 'OrderList'), JSON.stringify(vueCandidates.filter((c) => c.rule === 'R-09').map((c) => c.symbol)))
+  check('所有候选带 file locator', vueCandidates.every((c) => c.file === 'src/OrderList.vue'))
 
   // ── 6. 规则目录完整性 ────────────────────────────────────────────────────────
   console.log('规则目录')

@@ -2,9 +2,9 @@
 
 # dsh-user-experience
 
-> DeepSeek Harness（DSH）UX 走查插件：**帮你发现项目中可能存在的用户体验问题——自动走查 React/TypeScript 源码，定位问题并给出具体优化建议。**
+> DeepSeek Harness（DSH）UX 走查插件：**帮你发现项目中可能存在的用户体验问题——自动走查 React（TypeScript / JavaScript）与 Vue 3 源码，定位问题并给出具体优化建议。**
 >
-> v0.1 能力边界：仅 React + TypeScript 源码、仅静态证据、不覆盖视觉类问题。
+> v0.2 能力边界：支持 React + TypeScript / React + JavaScript / Vue 3、仅静态证据、不覆盖视觉类问题。
 
 现有自动化检查（axe、Lighthouse）只能校验绝对规则——对比度够不够、有没有 alt。但体验问题的本质是**相对的**：删除前的二次确认，对偶尔操作的用户是保护，对每天处理上百条记录的操作员是损耗。脱离了"给谁用"，"体验问题"无法定义。
 
@@ -12,12 +12,19 @@
 
 ---
 
-## 能力边界（v0.1 明确不做）
+## 能力边界（v0.2 明确不做）
 
-- 仅支持 **React + TypeScript** 源码（检出其他技术栈时明确告知不支持）
+| 支持 | 解析引擎 |
+|---|---|
+| React + TypeScript（.ts / .tsx） | TypeScript 编译器 API（TSX） |
+| React + JavaScript（.js / .jsx） | 同一引擎，.js 也可能含 JSX，统一按 TSX 解析 |
+| Vue 3（.vue SFC） | `@vue/compiler-sfc` 拆分 + `@vue/compiler-dom` 模板 AST；`<script>` / `<script setup>` 块复用 TypeScript 引擎，行号平移到整个 .vue 文件 |
+
+**明确不支持（检出时如实告知，不给低质量猜测）**：Svelte、Vue 2（SFC 语法与 @vue/compiler-sfc 不兼容）、小程序（.wxml）等。扩展细节见 [`dsh-user-experience-v0.2-spec.md`](dsh-user-experience-v0.2-spec.md)。
+
 - 证据等级固定为 **static**（静态源码证据）；**不覆盖视觉类问题**：对比度、热区尺寸、文字截断、焦点顺序
 - 不自动修复 / 不自动改代码：只给优化方向（"提醒开发者去看一眼"，不是判决书）
-- 输入源仅源码；网站输入（v0.2）、设计图输入（v0.3）为预留路线
+- 输入源仅源码；网站输入（v0.3）、设计图输入（v0.4）为预留路线
 
 ## 功能
 
@@ -113,7 +120,8 @@ pnpm test          # 冒烟测试（AST 引擎 / persona / glossary / 矩阵 / �
 ## 发布检查项
 
 - [x] README 安全提示（见上方「安装」）
-- [x] README 声明 v0.1 能力边界（仅源码、仅静态证据、不覆盖视觉类问题）
+- [x] README 声明 v0.2 能力边界（React TS/JS + Vue 3、仅静态证据、不覆盖视觉类问题）
+- [x] v0.2 技术栈扩展说明文档（`dsh-user-experience-v0.2-spec.md`）
 - [x] 锁定 DSH 依赖版本（developer preview）
 - [x] 仓库添加 **`dsh-plugin`** topic（官方发现机制）
 - [x] 向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，中英文 README 各加一行（站点合并后自动同步）——[PR #63 已合并](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/63)，[文案更新 PR #66](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/66)

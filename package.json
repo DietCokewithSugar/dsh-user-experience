@@ -1,7 +1,7 @@
 {
   "name": "dsh-user-experience",
-  "version": "0.1.0",
-  "description": "DeepSeek Harness UX walkthrough plugin: persona-driven source-code UX review for React + TypeScript projects",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness UX walkthrough plugin: persona-driven source-code UX review for React (TypeScript/JavaScript) and Vue 3 projects",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
@@ -70,6 +70,8 @@
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "3.18.1",
+    "@vue/compiler-dom": "^3.5.41",
+    "@vue/compiler-sfc": "^3.5.41",
     "typescript": "^5.9.0",
     "yaml": "^2.6.0"
   },

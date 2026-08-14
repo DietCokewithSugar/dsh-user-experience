@@ -96,6 +96,45 @@ export function OrderList() {
   check('R-04 候选（remove 无确认）', (scanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-04'))
   check('候选带 file locator', (scanResult.candidates as Array<{ file: string }>).every((c) => c.file === 'src/pages/Order.tsx'))
 
+  // ── 1b. ux_scan：Vue 3 项目分派（SFC 模板 + script 复用 TS 引擎）───────────
+  console.log('ux_scan（Vue 3）')
+  const vueRoot = mkdtempSync(join(tmpdir(), 'dsh-ux-vue-'))
+  try {
+    mkdirSync(join(vueRoot, 'src', 'components'), { recursive: true })
+    writeFileSync(join(vueRoot, 'package.json'), JSON.stringify({ name: 'demo-vue', dependencies: { vue: '3.5.0' } }))
+    writeFileSync(join(vueRoot, 'src', 'components', 'List.vue'), `<script setup lang="ts">
+import { ref } from 'vue'
+
+const items = ref([])
+async function remove(id: string) {
+  await fetch('/api/items/' + id, { method: 'DELETE' })
+}
+</script>
+
+<template>
+  <div class="text-black">
+    <button @click="remove('1')">删除</button>
+    <p>{{ item.name }}</p>
+  </div>
+</template>
+`)
+    const vueSession = Session.create(SessionId('e2e-vue'), undefined, {
+      version: 0, id: SessionId('e2e-vue'), createdAt: Date.now(), cwd: vueRoot,
+    })
+    const vueAgent: StubAgent = { session: vueSession, followup: () => {} }
+    const vueScanResult = await (scanTool?.execute as (args: unknown, exec: unknown) => Promise<Record<string, unknown>>)(
+      { paths: ['src'] }, { agent: vueAgent, signal: new AbortController().signal },
+    )
+    check('Vue 3 项目 supported', vueScanResult.supported === true && String(vueScanResult.stack).includes('Vue'), JSON.stringify(vueScanResult.stack))
+    check('Vue 收集 .vue 文件', (vueScanResult.files as Array<{ path: string }>).some((f) => f.path.endsWith('.vue')), JSON.stringify(vueScanResult.files))
+    check('Vue R-09 快车道候选（text-black 无 dark:）', (vueScanResult.candidates as Array<{ rule: string; verified_by: string; file: string }>).some((c) => c.rule === 'R-09' && c.verified_by === 'ast' && c.file === 'src/components/List.vue'))
+    check('Vue script 块 R-06 候选（await 无 catch）', (vueScanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-06'))
+    check('Vue 模板 R-04 候选（remove 无确认）', (vueScanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-04'))
+    check('Vue 模板 R-08 候选（{{ item.name }}）', (vueScanResult.candidates as Array<{ rule: string }>).some((c) => c.rule === 'R-08'))
+  } finally {
+    rmSync(vueRoot, { recursive: true, force: true })
+  }
+
   // ── 2. ux_report：定稿 + 矩阵 + 合并 + 会话事件 ─────────────────────────────
   console.log('ux_report')
   const reportTool = byName.get('ux_report')
