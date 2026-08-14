@@ -165,11 +165,6 @@ export interface FindingTechnical {
 /**
  * 一条用户体验问题。severity 的 level 由 impact × reach 推导；
  * reach 由 persona_refs 的 share 之和推导（多 persona 合并时自然上升）。
- *
- * 字段分两层：`scene` / `summary` / `consequence` 是**人话层**（卡片与报告
- * 的第一屏，非技术读者据此判断问题是否成立）；`evidence` / `suggestion` 是
- * **技术层**（折叠展示，确认后交给 AI 修改）。人话层字段在重放缺字段的老
- * 报告时由 human.ts 的兜底函数补齐。
  */
 export interface UxFinding {
   /** 报告内唯一 id（UX-0001 起）。 */

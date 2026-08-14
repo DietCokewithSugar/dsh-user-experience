@@ -141,11 +141,6 @@ function locationOf(context: ConversationNodeContext): ConversationLocation {
   return context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' }
 }
 
-/**
- * 事件数据 → 卡片视图。人话层字段按"事件里有就用、没有就兜底"处理：
- * 加了人话层之前写入的会话日志同样要能重放，那些老 finding 没有
- * scene / summary，落到 human.ts 的兜底推导上。
- */
 function viewData(state: UxReportState): UxReportChatData {
   return {
     reportId: state.reportId,

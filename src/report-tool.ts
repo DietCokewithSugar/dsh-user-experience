@@ -465,11 +465,6 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           if (draft.impact === 'high' && existing.technical.severity.impact === 'low') {
             existing.technical.severity.impact = 'high'
           }
-          // 人话层首条为准，只补空：先命中的画像已经把话说清楚了，不覆盖。
-          const extra = draft.consequence?.trim() ?? ''
-          if (existing.consequence === undefined && extra.length > 0) {
-            existing.consequence = extra
-          }
           continue
         }
 
