@@ -28,6 +28,14 @@ Or run the command directly:
 dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 ```
 
+If the market fails with `getRepoRefs` / `resolveGit` (common on Windows with pnpm 11), pin a **40-character commit**. That skips `git ls-remote … HEAD HEAD^{}`, which some Git for Windows builds reject:
+
+```sh
+dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience#57fe06eb8bc1313a931bfb50eb2416c52bb1fdea
+```
+
+Copy a newer SHA from the [`main` commit list](https://github.com/DietCokewithSugar/dsh-user-experience/commits/main) if you want the latest. If an earlier failed install left `dsh-user-experience` in the profile `package.json`, delete that line first, then retry.
+
 After a successful install, refresh the page. A restart is not required. This repository ships prebuilt `lib/` artifacts, so GitHub installs do not run a build script and pnpm will not block them. Restart or reload the `web` profile only if the market says it could not hot-load the plugin. Pin a trusted commit for production use; see the [security note](#installation).
 
 ## Screenshots

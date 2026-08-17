@@ -28,6 +28,14 @@
 dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 ```
 
+若市场报 `getRepoRefs` / `resolveGit`（常见于 Windows + pnpm 11），请改用 **40 位完整 commit**。这样会跳过 `git ls-remote … HEAD HEAD^{}`，部分 Git for Windows 会因为这条命令直接失败：
+
+```sh
+dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience#57fe06eb8bc1313a931bfb50eb2416c52bb1fdea
+```
+
+若要装更新的版本，到 [`main` 提交记录](https://github.com/DietCokewithSugar/dsh-user-experience/commits/main) 复制最新 SHA。若上次失败已经把 `dsh-user-experience` 写进了 profile 的 `package.json`，先删掉那一行再装。
+
 安装成功后刷新页面即可，不必重启。仓库已提交预构建 `lib/`，从 GitHub 安装时不会执行构建脚本，pnpm 也不会拦截。仅当市场提示无法热加载时，再重启或重新加载 `web` profile。生产环境建议锁定可信 commit；安装前请阅读下方[安全提示](#安装)。
 
 ## 界面预览
