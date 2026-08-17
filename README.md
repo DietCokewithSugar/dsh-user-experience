@@ -2,6 +2,8 @@
 
 # dsh-user-experience
 
+[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 > A UX walkthrough plugin for DeepSeek Harness (DSH): **AI simulates target users to uncover UX problems during development—before they reach production—and provides concrete optimization suggestions.**
 >
 > Scope: React + TypeScript / React + JavaScript / Vue 3, CSS/layout analysis, and optional browser evidence when the current Harness session can open the application.
@@ -34,15 +36,23 @@ The walkthrough report explains the observed behavior and user impact in plain l
 
 ![UX report card shown in Harness after installation](docs/images/ux-report-card.png)
 
+Speak in plain language to start a walkthrough. If personas are missing, the plugin drafts 1–3 users and asks once before continuing:
+
+![Start a walkthrough in natural language and confirm target personas](docs/images/ux-natural-language.png)
+
 Once you confirm that a finding is real, the card provides a task Prompt you can copy to another AI. It describes the observed phenomenon rather than prescribing code changes, tells the AI to inspect the complete project context, and explicitly allows copy changes:
 
 ![Confirmed UX finding with a copy-to-AI Prompt action](docs/images/ux-confirmed-prompt.png)
+
+After you edit front-end code, the walkthrough runs itself—no persona questions, no interruption. It speaks up only for level-one / level-two issues:
+
+![Automatic walkthrough after a code change, without interrupting coding](docs/images/ux-auto-scan.png)
 
 Multi-level evidence appears in the technical details so every visual or interaction conclusion can be reviewed:
 
 ![UX report with rendered and static evidence levels](docs/images/ux-multi-evidence.png)
 
-The report card and confirmation workflow can use the developer’s language (interface preview with sample data):
+The report card and confirmation workflow can use the developer’s language (English interface below):
 
 ![English UX report card with interactive evidence](docs/images/ux-english-report.png)
 

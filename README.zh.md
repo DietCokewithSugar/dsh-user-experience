@@ -2,6 +2,8 @@
 
 # dsh-user-experience
 
+[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 > DeepSeek Harness（DSH）UX 走查插件：**让 AI 模拟目标用户，在开发阶段提前发现用户体验问题，并给出具体优化建议。**
 >
 > 能力边界：支持 React + TypeScript / React + JavaScript / Vue 3、CSS/布局分析；当前 Harness 会话能够打开项目时，可进一步获取浏览器证据。
@@ -34,15 +36,23 @@ dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 
 ![安装后在 Harness 中显示的 UX 走查报告卡片](docs/images/ux-report-card.png)
 
+直接说话就能走查。没有画像时，先猜 1–3 个用户，问一句再开始：
+
+![用自然语言发起走查，并确认目标用户画像](docs/images/ux-natural-language.png)
+
 确认问题属实后，卡片会提供一份可复制给其他 AI 的任务 Prompt。它只描述观察到的现象，不预设代码改法；同时提醒 AI 先阅读完整项目上下文，并明确允许修改界面文案：
 
 ![确认 UX 问题后出现复制给 AI 的任务 Prompt 按钮](docs/images/ux-confirmed-prompt.png)
+
+改完前端代码，走查自己跑——不问画像、不打断写代码。只有一级 / 二级问题才会出声：
+
+![改完代码后自动走查，不打断开发](docs/images/ux-auto-scan.png)
 
 多级证据会显示在技术细节中，视觉与交互结论都能追溯到对应截图、DOM 测量或任务步骤：
 
 ![包含 rendered 与 static 证据等级的 UX 报告](docs/images/ux-multi-evidence.png)
 
-报告卡片和确认流程可以跟随开发者使用的语言（下图为示例数据）：
+报告卡片和确认流程可以跟随开发者使用的语言（下图为英文）：
 
 ![包含 interactive 证据的英文 UX 报告卡片](docs/images/ux-english-report.png)
 
