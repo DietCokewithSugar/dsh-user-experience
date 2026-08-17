@@ -2,3 +2,8 @@
 * text=auto eol=lf
 *.png binary
 *.jpg binary
+
+# Prebuilt install artifacts. GitHub install loads these files as-is so the
+# package does not need a prepare/lifecycle script. Keep language stats on
+# the TypeScript sources, and collapse generated diffs in review.
+lib/** linguist-generated=true

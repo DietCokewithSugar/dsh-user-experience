@@ -28,7 +28,7 @@
 dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 ```
 
-安装完成后，重启 DSH 或重新加载 `web` profile。GitHub 插件会在安装阶段执行构建脚本；安装前请阅读下方[安全提示](#安装)，生产环境建议锁定可信 commit。
+安装成功后刷新页面即可，不必重启。仓库已提交预构建 `lib/`，从 GitHub 安装时不会执行构建脚本，pnpm 也不会拦截。仅当市场提示无法热加载时，再重启或重新加载 `web` profile。生产环境建议锁定可信 commit；安装前请阅读下方[安全提示](#安装)。
 
 ## 界面预览
 
@@ -186,17 +186,15 @@ autoScan:
 
 > ⚠️ **安全提示（必读）**
 >
-> 从 GitHub 安装的插件会在**安装时在你的机器上执行构建脚本**（本仓库通过 `prepare` 脚本从源码构建发布产物；pnpm ≥ 10 首次 `add` 时还会要求你在 profile 的 `pnpm-workspace.yaml` 中显式 allowlist 该构建）。这等于**授予该包在安装阶段执行代码的权限**，位于 agent 沙箱之外。
+> 从 GitHub 安装会拉取本仓库**以及已提交的 `lib/` 预构建产物**。包内**没有 `prepare` / `preinstall` / `postinstall` 脚本**，因此 pnpm ≥ 10 不会弹出「构建脚本被拦截」。安装阶段不会在你的机器上编译 TypeScript。
 >
-> 因此：
-> 1. **只安装你信任来源的插件**——安装即执行；
-> 2. **锁定 commit**，防止后续推送悄悄改变安装时执行的代码：
+> 插件激活后仍会在 Harness 进程中运行其代码。因此：
+> 1. **只安装你信任来源的插件**；
+> 2. **锁定 commit**，防止后续推送悄悄改变你加载的代码：
 >
 > ```sh
 > dsh plugin --profile <你的profile> add github:DietCokewithSugar/dsh-user-experience#<commit-sha>
 > ```
->
-> 如果不想授予构建权限，也可以从 npm 安装预构建产物：`dsh plugin add dsh-user-experience`。
 
 ### 与其他插件共存
 
@@ -204,13 +202,13 @@ Harness、Cordis 和 React 都是**由宿主 profile 提供的 peer dependency**
 
 - 不设置 `overrides`、`packageExtensions`，不重写 profile 依赖
 - 不修改 Node.js 或 React 版本
-- GitHub 安装时的 `prepare` 只构建本包，不执行 `pnpm/npm install`、`add`、`update` 或 `upgrade`
+- 安装时不执行 lifecycle 脚本；GitHub 安装直接加载已提交的 `lib/`，不执行 `pnpm/npm install`、`add`、`update` 或 `upgrade`
 - DSH 使用兼容 peer 范围，不会把本仓库的开发版本强行装入 profile
 - CI 会把打包产物安装到临时 profile，逐项验证插件与 profile 解析到的 Harness、Cordis 和 React 真实路径完全相同
 
 这些约束可以防止**本插件**制造重复运行时。如果另一个插件仍把 DSH 包放在直接依赖中，它依然可能引入自己的冲突副本，也应采用相同的 peer dependency 约定。
 
-安装完成后，插件行（id `ux-experience`）进入配置层；重启 `dsh` 或重新加载 profile 生效。可用配置项（在 profile 的 `cordis.patch.yml` 或 `--patch` 层按 id 覆盖）：
+安装成功后，插件行（id `ux-experience`）进入配置层。刷新页面即可；仅当市场无法热加载时，再重启 `dsh` 或重新加载 profile。可用配置项（在 profile 的 `cordis.patch.yml` 或 `--patch` 层按 id 覆盖）：
 
 ```yaml
 - id: ux-experience
@@ -263,6 +261,8 @@ pnpm run build     # tsdown（node half + client bundle）+ tsc（类型声明�
 pnpm test          # 冒烟测试（AST/CSS / 证据等级 / 语言适配 / persona / 模式 / 账本 / 全链路）
 pnpm run test:singleton  # 打包到临时 profile，验证共享运行时身份
 ```
+
+`lib/` 已提交进仓库，因此 `dsh plugin add github:…` 安装时不必跑 `prepare`。改完 `src/` 后请重新构建并提交更新后的 `lib/`；CI 会在产物漂移时失败。
 
 - **兼容性基线**：本地构建与测试使用 `@deepseek-ai/dsh-*@0.1.0-rc.6` 和 `@deepseek-ai/cordis@4.0.1`；运行时框架包由 profile 通过 peer 提供（DSH 范围为 `>=0.1.0-rc.6 <0.2.0`）。
 - 结构：`src/index.ts` 为 Host 插件（卡片按钮的隐藏判定通道 + 提示词注入 + 四个模型工具 + 改动触发的自动走查）；`src/client/` 为 Web 客户端插件（报告卡片，经 `dsh.client` 声明被模块表发现）；一个 bundle 行（`cordis.patch.yml`）同时挂载两者。
