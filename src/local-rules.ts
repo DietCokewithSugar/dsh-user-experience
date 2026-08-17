@@ -33,12 +33,21 @@ export interface LocalRules {
 }
 
 interface CacheEntry {
-  mtimeMs: number
+  stamp: string
   rules: LocalRules
 }
 
-/** cwd → 最近一次读取结果（mtime 一致才命中）。 */
+/** cwd → 最近一次读取结果（mtime + size 一致才命中）。 */
 const cache = new Map<string, CacheEntry>()
+
+function stampOf(file: string): string | undefined {
+  try {
+    const st = statSync(file)
+    return `${st.mtimeMs}:${st.size}`
+  } catch {
+    return undefined
+  }
+}
 
 export function localRulesPath(root: string): string {
   return join(root, LOCAL_RULES_FILE)
@@ -67,15 +76,13 @@ function asAutoScan(value: unknown): AutoScanPreference | undefined {
  */
 export function loadLocalRules(root: string): LocalRules {
   const file = localRulesPath(root)
-  let mtimeMs: number
-  try {
-    mtimeMs = statSync(file).mtimeMs
-  } catch {
+  const stamp = stampOf(file)
+  if (stamp === undefined) {
     cache.delete(root)
     return {}
   }
   const hit = cache.get(root)
-  if (hit !== undefined && hit.mtimeMs === mtimeMs) return hit.rules
+  if (hit !== undefined && hit.stamp === stamp) return hit.rules
   let rules: LocalRules = {}
   if (existsSync(file)) {
     let parsed: unknown
@@ -94,6 +101,6 @@ export function loadLocalRules(root: string): LocalRules {
       }
     }
   }
-  cache.set(root, { mtimeMs, rules })
+  cache.set(root, { stamp, rules })
   return rules
 }

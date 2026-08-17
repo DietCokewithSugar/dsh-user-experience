@@ -17,5 +17,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Keep committed lib/ in sync with source
+        run: git diff --exit-code -- lib
       - run: pnpm test
       - run: pnpm run test:singleton

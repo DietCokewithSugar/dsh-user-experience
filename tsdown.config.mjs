@@ -6,9 +6,6 @@
  *    由 profile 的 pnpm 依赖树在运行时解析）。类型声明由 `tsc -p tsconfig.json`
  *    单独产出到 `lib/types`。
  * 2. Client half：`src/client/index.ts` → `lib/client.js`（CJS + loader 契约）。
- *    Web 客户端模块表通过 `window.__ModuleLoader__.load({ id, factory })`
- *    加载插件 bundle：banner/footer/intro 三段即该契约；react 等平台模块
- *    走模块表（external），其余代码全部内联。
  */
 import { defineConfig } from 'tsdown'
 
@@ -26,10 +23,10 @@ const PLATFORM_MODULES = [
   '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-attachment',
   '@deepseek-ai/dsh-client-schema-form',
-] as const
+]
 
 /** client-runtime 为 immediately-tier 行，其 /client 面由模块表原生应答。 */
-const CLIENT_EXTERNALS: readonly string[] = [
+const CLIENT_EXTERNALS = [
   ...PLATFORM_MODULES,
   '@deepseek-ai/dsh-client-runtime/client',
 ]
@@ -42,7 +39,6 @@ export default defineConfig([
     format: ['esm'],
     platform: 'node',
     target: 'es2024',
-    // package.json 为 type: module，固定 .js 扩展名（main 指向 lib/index.js）。
     fixedExtension: false,
     dts: false,
     clean: false,
@@ -57,9 +53,7 @@ export default defineConfig([
     sourcemap: true,
     clean: false,
     deps: {
-      // 模块表能应答的平台模块保持外部引用。
       neverBundle: [...CLIENT_EXTERNALS],
-      // 其余一律内联（本插件 client 面无第三方运行时依赖）。
       alwaysBundle: (id) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
     },
     define: {

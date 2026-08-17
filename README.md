@@ -28,7 +28,7 @@ Or run the command directly:
 dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
 ```
 
-Restart DSH or reload the `web` profile after installation. GitHub plugins execute build scripts during installation; read the [security note](#installation) before installing, and pin a trusted commit for production use.
+After a successful install, refresh the page. A restart is not required. This repository ships prebuilt `lib/` artifacts, so GitHub installs do not run a build script and pnpm will not block them. Restart or reload the `web` profile only if the market says it could not hot-load the plugin. Pin a trusted commit for production use; see the [security note](#installation).
 
 ## Screenshots
 
@@ -186,17 +186,15 @@ autoScan:
 
 > ⚠️ **Security note (must read)**
 >
-> Plugins installed from GitHub **run a build script on your machine at install time** (this repo builds its publish artifacts from source via a `prepare` script; on first `add`, pnpm ≥ 10 also asks you to explicitly allowlist that build in your profile's `pnpm-workspace.yaml`). This amounts to **granting the package permission to execute code during installation**, outside the agent sandbox.
+> GitHub installs fetch this repository **including the committed `lib/` artifacts**. There is **no `prepare` / `preinstall` / `postinstall` script**, so pnpm ≥ 10 will not ask you to allowlist a build. Installation does not compile TypeScript on your machine.
 >
-> Therefore:
-> 1. **Only install plugins from sources you trust** — installing is executing;
-> 2. **Pin a commit** so later pushes cannot silently change the code that runs at install time:
+> Activating the plugin still runs its code inside the Harness process. Therefore:
+> 1. **Only install plugins from sources you trust**;
+> 2. **Pin a commit** so later pushes cannot silently change what you load:
 >
 > ```sh
 > dsh plugin --profile <your-profile> add github:DietCokewithSugar/dsh-user-experience#<commit-sha>
 > ```
->
-> If you'd rather not grant build permission, install the prebuilt artifact from npm: `dsh plugin add dsh-user-experience`.
 
 ### Coexisting with other plugins
 
@@ -204,13 +202,13 @@ Harness, Cordis, and React are **host-owned peer dependencies**. This package do
 
 - No `overrides`, `packageExtensions`, or profile dependency rewrites
 - No Node.js or React version changes
-- The GitHub `prepare` script only builds this package; it does not run `pnpm/npm install`, `add`, `update`, or `upgrade`
+- No install-time lifecycle scripts; GitHub installs load committed `lib/` artifacts and do not run `pnpm/npm install`, `add`, `update`, or `upgrade`
 - Compatible DSH release candidates are accepted through peer ranges instead of forcing this plugin's development version into the profile
 - CI installs a packed copy into a temporary profile and verifies that the profile and plugin resolve identical real paths for Harness, Cordis, and React packages
 
 This prevents **this plugin** from creating the duplicate-runtime condition. A different plugin that ships DSH packages as direct dependencies can still introduce its own conflicting copy and should adopt the same peer-dependency contract.
 
-After installation, the plugin row (id `ux-experience`) enters the configuration layer; restart `dsh` or reload the profile to take effect. Available config options (overridden by id in the profile's `cordis.patch.yml` or the `--patch` layer):
+After a successful install, the plugin row (id `ux-experience`) enters the configuration layer. Refresh the page; restart `dsh` or reload the profile only if the market cannot hot-load it. Available config options (overridden by id in the profile's `cordis.patch.yml` or the `--patch` layer):
 
 ```yaml
 - id: ux-experience
@@ -263,6 +261,8 @@ pnpm run build     # tsdown (host half + client bundle) + tsc (type declarations
 pnpm test          # smoke tests (AST/CSS / evidence levels / localization / persona / modes / ledger / end-to-end)
 pnpm run test:singleton  # pack into a temporary profile and verify shared runtime identities
 ```
+
+`lib/` is committed so `dsh plugin add github:…` can load without a `prepare` script. After changing `src/`, rebuild and commit the updated `lib/` artifacts; CI fails if they drift.
 
 - **Compatibility baseline**: local build/tests use `@deepseek-ai/dsh-*@0.1.0-rc.6` and `@deepseek-ai/cordis@4.0.1`; runtime framework packages are peers resolved from the profile (`>=0.1.0-rc.6 <0.2.0` for DSH).
 - Structure: `src/index.ts` is the Host plugin (hidden card-button channel + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.

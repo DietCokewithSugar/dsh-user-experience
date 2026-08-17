@@ -29,7 +29,7 @@ const singletonPackages = [
 
 try {
   // 直接从已经通过 build/check-package 的发布文件组装 tarball。这里刻意不调用
-  // npm/pnpm pack，避免 pack 生命周期再次执行 prepare 或接触宿主依赖。
+  // npm/pnpm pack，避免 pack 生命周期接触宿主依赖。
   const stagingRoot = join(temp, 'staging')
   const stagingPackage = join(stagingRoot, 'package')
   mkdirSync(stagingPackage, { recursive: true })
