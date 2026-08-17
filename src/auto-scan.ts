@@ -23,9 +23,13 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { loadLocalRules } from './local-rules'
-import { loadPersonas } from './persona'
+import { loadPersonaFile } from './persona'
 import { detectStack } from './project'
+import type { PersonaStatus } from './types'
 import type { UxConfig } from './config'
+
+/** 自动走查时画像处于哪种状态，决定提示词是否要求先写草稿。 */
+export type AutoScanPersonaState = 'missing' | PersonaStatus
 
 /** 值得走查的前端源码扩展名（纯后端改动不进入）。 */
 const FRONTEND_EXTENSIONS = [
@@ -98,8 +102,26 @@ export function scanUnitsOf(files: Iterable<string>): string[] {
   return [...units].sort()
 }
 
+function personaInstruction(state: AutoScanPersonaState): string {
+  if (state === 'missing') {
+    return [
+      '2. 项目还没有 .ux/personas.yml。先根据 README / package.json / 路由推断 1-3 个画像，',
+      '   立即调用 ux_personas_write（status=draft）落盘，然后用这些草稿走查。',
+      '   不要向用户展示画像确认卡片，不要问「这些用户对吗」。',
+    ].join('\n')
+  }
+  if (state === 'draft') {
+    return '2. 当前画像是推断草稿。直接用它们走查，不要再问确认。'
+  }
+  return '2. 按 .ux/personas.yml 的画像和产品类型重点判定；CSS/布局候选没有截图时只能作为候选，不得输出需要 rendered/interactive 的规则。'
+}
+
 /** R7 送给模型的走查提示。 */
-export function buildAutoScanPrompt(units: readonly string[], files: readonly string[]): string {
+export function buildAutoScanPrompt(
+  units: readonly string[],
+  files: readonly string[],
+  personaState: AutoScanPersonaState = 'confirmed',
+): string {
   return [
     '[dsh-user-experience R7] 刚才的改动涉及前端界面，按下面的方式**安静地**跑一次 UX 走查：',
     '',
@@ -107,12 +129,13 @@ export function buildAutoScanPrompt(units: readonly string[], files: readonly st
     '   **扫描单元是完整组件 / 页面，不是改动的那几行**——没有空态、没有错误分支、没有二次确认',
     '   这类缺失型问题在 diff 里根本不存在，只看改动行必然漏掉。',
     `   （本次改动的文件：${files.join('、')}）`,
-    '2. 按 .ux/personas.yml 的画像和产品类型重点判定；CSS/布局候选没有截图时只能作为候选，不得输出需要 rendered/interactive 的规则。',
+    personaInstruction(personaState),
     '3. 调用一次 ux_report 定稿，带相同的 product_type/language，mode 设为 "auto"。',
     '4. 【重要】这次走查是你自己发起的，不是用户要求的：',
-    '   - 全程不要向用户提问、不要索要确认；',
+    '   - 全程不要向用户提问、不要索要确认、不要问走查范围、不要问画像对不对；',
     '   - 报告出来后，只有存在一级 / 二级问题时才用一句话提示用户；',
-    '   - 没有一级 / 二级问题就安静收尾，不要复述报告，继续等用户的下一个指令。',
+    '   - 没有一级 / 二级问题就安静收尾，不要复述报告，继续等用户的下一个指令；',
+    '   - 若画像是这次才推断的草稿，一级 / 二级提示里可以加半句「这次按『某某』视角看的，不对可以说」，不要做成弹窗。',
     '5. 如果这次改动明显与界面体验无关（纯类型、纯工具函数），直接跳过走查，不要硬跑。',
   ].join('\n')
 }
@@ -168,9 +191,9 @@ export function registerAutoScan(ctx: Context, config: UxConfig): void {
     state.files.clear()
 
     if (!autoScanEnabled(cwd, config)) return
-    // 无 persona 不出结论：这时静默跳过，绝不在用户干别的事时弹初始化引导。
-    if (loadPersonas(cwd) === undefined) return
     if (!detectStack(cwd).supported) return
+    const personas = loadPersonaFile(cwd)
+    const personaState: AutoScanPersonaState = personas === undefined ? 'missing' : personas.status
 
     const signature = files.join('|')
     if (signature === state.lastSignature) return
@@ -182,7 +205,7 @@ export function registerAutoScan(ctx: Context, config: UxConfig): void {
     state.lastTurn = payload.turn
     state.lastSignature = signature
     agent.steer(createUserMessage({
-      content: [{ type: 'text', text: buildAutoScanPrompt(scanUnitsOf(files), files) }],
+      content: [{ type: 'text', text: buildAutoScanPrompt(scanUnitsOf(files), files, personaState) }],
       source: { kind: 'plugin', plugin: 'dsh-user-experience' },
     }))
   })
