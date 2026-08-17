@@ -2,10 +2,10 @@
  * dsh-user-experience — Host 侧插件入口。
  *
  * 一个 bundle 行（id `ux-experience`）同时承担：
- * 1. `/ux` 人工命令（persona 初始化 / 走查发起）—— `ctx.commands`；
+ * 1. `/ux` 仅作为报告卡片按钮的隐藏判定通道—— `ctx.commands`；
+ *    用户用自然语言发起走查，不再使用 /ux init 或 /ux scan；
  * 2. Persona 上下文注入（R2）—— `ctx.systemPrompt.section()`，按当前 agent
- *    的 cwd 读取 `.ux/personas.yml`，无 persona 时注入初始化引导
- *    （无 persona 不出结论）；
+ *    的 cwd 读取 `.ux/personas.yml`，无画像时注入懒初始化 + 意图门；
  * 3. 四个模型工具—— `ux_scan`（AST 候选求证 + 人话位置素材）、`ux_report`
  *    （定稿 + 严重度矩阵 + 多 persona 合并 + 指纹与隐式确认 + 会话事件）、
  *    `ux_judge`（自然语言与批量判定，用户不需要报任何 ID）、
@@ -48,7 +48,7 @@ export { Config }
  * @param config - 校验后的插件配置（含 schema 默认值）。
  */
 export function apply(ctx: Context, config: UxConfig): void {
-  ctx.commands.register(createUxCommand(config.mode, config.outputLanguage))
+  ctx.commands.register(createUxCommand(config.outputLanguage))
 
   // R2：Persona 注入。文本是每次装配时求值的 provider，按 agent 的 cwd
   // 读取画像文件（mtime 缓存），所以多项目并存时各会话注入各自的画像。

@@ -1,31 +1,26 @@
 /**
- * Persona 文件读写与校验（spec §5.1 / §R1 / §R2）。
+ * Persona 文件读写与校验。
  *
  * 存储位置：`.ux/personas.yml`（仓库内一等公民文件）。
- * 约束：AI 推断的画像只能作为草稿，`ux_personas_write` 工具仅在用户确认后
- * 被调用；本模块负责结构校验与缓存（按 cwd + mtime 缓存，装配系统提示词时
- * 每个请求都会经过 `renderPersonaSection`，小文件校验开销可忽略）。
+ * 推断草稿可先落盘（status=draft）供自动走查使用；用户确认后升为 confirmed。
+ * 本模块负责结构校验与缓存（按 cwd + mtime）。
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { nielsenGuidance } from './heuristics'
-import { HUMAN_COPY_RULE } from './human-copy'
-import type { Persona, PersonaCapability, PersonaFile } from './types'
+import { buildPersonaSectionText } from './protocol'
+import type { LoadedPersonas, Persona, PersonaCapability, PersonaFile, PersonaStatus } from './types'
 
 /** Persona 文件相对项目根的路径。 */
 export const PERSONAS_FILE = '.ux/personas.yml'
 
 const PERSONA_ID = /^[a-z][a-z0-9_-]*$/u
-const CAPABILITY_KEYS: readonly (keyof PersonaCapability)[] = [
-  'tech_literacy', 'device', 'network', 'accessibility_needs',
-]
 
 interface CacheEntry {
   mtimeMs: number
-  personas: readonly Persona[]
+  loaded: LoadedPersonas
 }
 
 /** cwd → 最近一次读取结果（mtime 一致才命中）。 */
@@ -33,6 +28,10 @@ const cache = new Map<string, CacheEntry>()
 
 export function personasPath(root: string): string {
   return join(root, PERSONAS_FILE)
+}
+
+function asStatus(value: unknown): PersonaStatus {
+  return value === 'draft' ? 'draft' : 'confirmed'
 }
 
 /** 校验单条 persona，失败时抛出带上下文的 TypeError。 */
@@ -117,22 +116,30 @@ export function validatePersonas(values: readonly unknown[], where: string): Per
 }
 
 /** 校验 `.ux/personas.yml` 文件内容并转成强类型结构。 */
-function parsePersonaFile(raw: unknown, where: string): Persona[] {
+function parsePersonaFile(raw: unknown, where: string): LoadedPersonas {
   if (typeof raw !== 'object' || raw === null) {
     throw new TypeError(`${where}：顶层必须是对象`)
   }
-  const personas = (raw as Record<string, unknown>).personas
+  const doc = raw as Record<string, unknown>
+  const extra = Object.keys(doc).filter((key) => key !== 'personas' && key !== 'status')
+  if (extra.length > 0) {
+    throw new TypeError(`${where}：未知字段 ${extra.join(', ')}`)
+  }
+  const personas = doc.personas
   if (!Array.isArray(personas) || personas.length === 0) {
     throw new TypeError(`${where}：personas 必须是非空数组`)
   }
-  return validatePersonas(personas, `${where}.personas`)
+  return {
+    status: asStatus(doc.status),
+    personas: validatePersonas(personas, `${where}.personas`),
+  }
 }
 
 /**
- * 读取项目根目录下的 persona 文件。
- * @returns persona 列表；文件不存在时返回 undefined。
+ * 读取项目根目录下的 persona 文件（含 status）。
+ * @returns 画像与确认状态；文件不存在时返回 undefined。
  */
-export function loadPersonas(root: string): readonly Persona[] | undefined {
+export function loadPersonaFile(root: string): LoadedPersonas | undefined {
   const file = personasPath(root)
   let mtimeMs: number
   try {
@@ -142,11 +149,19 @@ export function loadPersonas(root: string): readonly Persona[] | undefined {
     return undefined
   }
   const hit = cache.get(root)
-  if (hit !== undefined && hit.mtimeMs === mtimeMs) return hit.personas
+  if (hit !== undefined && hit.mtimeMs === mtimeMs) return hit.loaded
   const parsed = parse(readFileSync(file, 'utf8')) as unknown
-  const personas = parsePersonaFile(parsed, file)
-  cache.set(root, { mtimeMs, personas })
-  return personas
+  const loaded = parsePersonaFile(parsed, file)
+  cache.set(root, { mtimeMs, loaded })
+  return loaded
+}
+
+/**
+ * 读取项目根目录下的 persona 列表。
+ * @returns persona 列表；文件不存在时返回 undefined。
+ */
+export function loadPersonas(root: string): readonly Persona[] | undefined {
+  return loadPersonaFile(root)?.personas
 }
 
 /** 已存在 persona 文件时，persona id 是否合法。 */
@@ -158,70 +173,19 @@ export function personaExists(root: string, id: string): boolean {
  * 写入 `.ux/personas.yml`（`ux_personas_write` 工具的唯一写入口）。
  * 写入前完整校验；返回落盘的 persona 列表。
  */
-export function writePersonas(root: string, personas: readonly Persona[]): readonly Persona[] {
+export function writePersonas(
+  root: string,
+  personas: readonly Persona[],
+  status: PersonaStatus = 'confirmed',
+): readonly Persona[] {
   const validated = validatePersonas(personas, `${PERSONAS_FILE} 写入`)
   const file = personasPath(root)
   mkdirSync(dirname(file), { recursive: true })
-  const doc: PersonaFile = { personas: [...validated] }
+  const doc: PersonaFile = { status, personas: [...validated] }
   writeFileSync(file, stringify(doc, { lineWidth: 100 }) + '\n', 'utf8')
   const mtimeMs = statSync(file).mtimeMs
-  cache.set(root, { mtimeMs, personas: validated })
+  cache.set(root, { mtimeMs, loaded: { status, personas: validated } })
   return validated
-}
-
-// ── R2：Persona 上下文注入（systemPrompt.section）────────────────────────────
-
-/** 尚无 persona 文件时的注入文本：无 persona 不出结论，先引导初始化。 */
-export const UX_NO_PERSONA_TEXT = [
-  '[dsh-user-experience] UX 走查插件已启用，但本项目还没有目标用户画像（.ux/personas.yml）。',
-  '没有 persona 就不出任何 UX 结论：用户提出走查需求时，先请用户执行 /ux init（或直接说"帮我初始化 UX 画像"），',
-  '由你读取 README / package.json / 路由结构生成 1-3 个画像草稿，交用户确认或修改后，再调用 ux_personas_write 落盘。',
-  '禁止在画像未确认的情况下给出体验问题判断。',
-].join('\n')
-
-/** 将 persona 列表渲染为系统提示词片段。 */
-function renderPersonas(personas: readonly Persona[]): string {
-  const lines = personas.map((persona) => [
-    `- [${persona.id}] ${persona.name}（share ${persona.share}）`,
-    `  场景：${persona.scenario}`,
-    `  目标：${persona.goals.join('；')}`,
-    `  能力：技术素养 ${persona.capability.tech_literacy} / 设备 ${persona.capability.device} / 网络 ${persona.capability.network}`
-      + (persona.capability.accessibility_needs.length > 0
-        ? ` / 无障碍 ${persona.capability.accessibility_needs.join(', ')}`
-        : ''),
-    `  关键路径：${persona.key_paths.join(' → ')}`,
-  ].join('\n'))
-  return lines.join('\n')
-}
-
-/** 已初始化 persona 时的注入文本：画像 + 走查协议。 */
-export function renderPersonaGuidance(personas: readonly Persona[]): string {
-  return [
-    '[dsh-user-experience] 本项目目标用户画像（.ux/personas.yml，走查的判定依据）：',
-    renderPersonas(personas),
-    '',
-    'UX 走查协议：',
-    '1. 每条 finding 必须携带非空 persona_refs，且其中每个 id 都存在于画像文件；R-09（深色模式）与用户画像无关，persona_refs 列全部画像。',
-    '2. 硬约束：没有 locator（file，尽量带 symbol）的问题不输出。',
-    '3. 判定顺序：确定产品/业务类型 → 模型读码提出候选 → 用 ux_scan 的源码/CSS 证据求证 → 可用时补充浏览器证据 → 确认后进 ux_report；R-09 由 AST 直接出结论。',
-    '4. 多 persona 时逐个画像独立走查，最后合并进一份 ux_report：同一位置同一规则合并为一条，persona_refs 取并集。',
-    '5. 严重度由矩阵推导：impact 你给（是否阻断关键任务），reach 由命中画像 share 之和推导（>= 0.5 为 wide），一级 / 二级问题必须优先处理。',
-    '6. R-02（术语不一致）条件触发：仅当本轮没有一级 / 二级问题时才执行；术语判定持久化到 .ux/glossary.yml，后续只做增量判断。',
-    '7. "发现的问题总数"不是目标，宁缺毋滥：拿不准的候选宁可丢弃，不要凑数。',
-    '   证据等级必须如实标记：static=源码/CSS；rendered=真实页面截图/DOM/尺寸；interactive=按 persona 实际完成任务并记录步骤。',
-    '   规则目录定义了每条规则的最低证据等级。浏览器不可用时退回 static，不得伪造高等级证据。',
-    `   Nielsen 十项可用性原则是基础检查框架：${nielsenGuidance('zh-CN').join('；')}。`,
-    '   输出语言优先跟随当前用户使用的语言，再跟随项目主 README；调用 ux_scan/ux_report 时显式传 language。',
-    '',
-    '报告是给两个读者看的（结构上已经分开，不要混着写）：',
-    `8. 面向开发者的内容：surface（可理解的页面名，如"管理员页面"；拟不出就用路由路径，不用文件路径）+ headline + description。${''}`,
-    `   ${HUMAN_COPY_RULE.split('\n').join('\n   ')}`,
-    '9. 给 AI 看的：locator / rule / verified_by / severity，照实填进 technical，不要塞进 description。',
-    '',
-    '确认闭环：',
-    '10. 用户说「第 2 条不成立」「这几条都对」「三级以下全部忽略」「删除那条我确认」时，调用 ux_judge 记录判定。',
-    '    绝不要让用户报告 ID 或问题编号，也不要让用户敲命令——他说什么，你直接转成 ux_judge 的 targets。',
-  ].join('\n')
 }
 
 /**
@@ -231,12 +195,8 @@ export function renderPersonaGuidance(personas: readonly Persona[]): string {
 export function renderPersonaSection(agent: Agent | undefined): string {
   const cwd = agent?.session.header.cwd
   if (cwd === undefined) return ''
-  const personas = loadPersonas(cwd)
-  if (personas === undefined) return UX_NO_PERSONA_TEXT
-  return renderPersonaGuidance(personas)
+  return buildPersonaSectionText(loadPersonaFile(cwd), collectInitBrief(cwd))
 }
-
-// ── 初始化草稿素材（/ux init 的 followup 用）─────────────────────────────────
 
 /** 收集生成画像草稿的素材简报：README 片段 + package.json + 顶层目录。 */
 export function collectInitBrief(root: string): string {
@@ -254,6 +214,15 @@ export function collectInitBrief(root: string): string {
     } catch {
       // package.json 不可解析时静默跳过，不影响画像草稿。
     }
+  }
+  try {
+    const top = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+      .map((entry) => entry.name)
+      .slice(0, 12)
+    if (top.length > 0) parts.push(`顶层目录：${top.join(', ')}`)
+  } catch {
+    // 列目录失败不影响简报的其余部分。
   }
   return parts.join('\n\n')
 }

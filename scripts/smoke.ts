@@ -23,7 +23,8 @@ import { nielsenGuidance, reviewPriority } from '../src/heuristics'
 import { detectProjectLanguage, normalizeLanguage, resolveOutputLanguage } from '../src/i18n'
 import { loadLocalRules } from '../src/local-rules'
 import { extractModeFlag, modeInstruction, resolveMode } from '../src/mode'
-import { writePersonas, loadPersonas } from '../src/persona'
+import { writePersonas, loadPersonas, loadPersonaFile, collectInitBrief } from '../src/persona'
+import { buildPersonaSectionText } from '../src/protocol'
 import { detectStack, gatherFiles } from '../src/project'
 import { productReviewFocus } from '../src/product'
 import {
@@ -222,6 +223,32 @@ try {
   check('writePersonas 落盘条数', written.length === 2)
   const loaded = loadPersonas(root)
   check('loadPersonas 往返一致', loaded !== undefined && loaded.length === 2 && loaded[0]?.id === 'novice-investor')
+  const legacyRoot = join(root, 'legacy-proj')
+  mkdirSync(join(legacyRoot, '.ux'), { recursive: true })
+  writeFileSync(join(legacyRoot, '.ux', 'personas.yml'), [
+    'personas:',
+    '  - id: legacy-user',
+    '    name: 旧文件用户',
+    '    scenario: 兼容无 status 的画像文件',
+    '    goals: [完成任务]',
+    '    capability: { tech_literacy: medium, device: both, network: stable, accessibility_needs: [] }',
+    '    key_paths: [打开页面]',
+    '    share: 1',
+    '',
+  ].join('\n'))
+  check('未写 status 的旧文件视为 confirmed',
+    loadPersonaFile(legacyRoot)?.status === 'confirmed' && loadPersonaFile(legacyRoot)?.personas[0]?.id === 'legacy-user')
+  writePersonas(root, personas, 'draft')
+  check('草稿 status 往返', loadPersonaFile(root)?.status === 'draft')
+  const sectionDraft = buildPersonaSectionText(loadPersonaFile(root), '')
+  check('草稿画像协议不走完整确认关卡',
+    sectionDraft.includes('推断草稿') && sectionDraft.includes('不要再走完整确认关卡'))
+  writePersonas(root, personas, 'confirmed')
+  const sectionMissing = buildPersonaSectionText(undefined, collectInitBrief(root))
+  check('无画像协议不提 /ux init', !sectionMissing.includes('/ux init') && sectionMissing.includes('自然语言'))
+  check('无画像协议含懒初始化', sectionMissing.includes('我按这些用户来看') && sectionMissing.includes('status=draft'))
+  const sectionConfirmed = buildPersonaSectionText(loadPersonaFile(root), '')
+  check('已确认画像协议含意图门', sectionConfirmed.includes('何时上场') && !sectionConfirmed.includes('/ux scan'))
   check('请求语言优先于项目语言',
     normalizeLanguage('English') === 'en'
     && resolveOutputLanguage(root, 'auto', 'zh-CN') === 'zh-CN')
@@ -389,7 +416,7 @@ function confirmRemove() {
     on: (event: string) => { listeners.push(event) },
   }
   apply(stubCtx as never, TEST_CONFIG)
-  check('注册 /ux 命令', commands.length === 1)
+  check('注册隐藏判定通道', commands.length === 1)
   check('注册 ux:personas 提示词段', sections.length === 1)
   check('注册 4 个模型工具', tools.length === 4)
   check('工具名 = ux_scan / ux_report / ux_judge / ux_personas_write', tools.every((t) => {
@@ -399,10 +426,11 @@ function confirmRemove() {
   check('R7 监听 tools/result 与 agent/turn-stopping',
     listeners.includes('tools/result') && listeners.includes('agent/turn-stopping'),
     listeners.join(','))
-  check('/ux 的 hint 不含报告 ID / findingID 参数格式', (() => {
+  check('命令栏不教 init / scan / judge', (() => {
     const definition = commands[0] as { input?: { hint?: string }; description?: string }
     const text = `${definition.input?.hint ?? ''} ${definition.description ?? ''}`
-    return !text.includes('报告ID') && !text.includes('findingID') && !text.includes('judge')
+    return !text.includes('init') && !text.includes('scan') && !text.includes('judge')
+      && !text.includes('报告ID') && !text.includes('findingID')
   })())
   check('依赖注入声明 = tools/commands/systemPrompt', inject.join(',') === 'tools,commands,systemPrompt')
 
@@ -617,6 +645,9 @@ export function UserTable() {
   check('R7 提示词说明扫完整组件而非 diff',
     autoPrompt.includes('完整组件 / 页面') && autoPrompt.includes('diff'))
   check('R7 提示词只在一级/二级问题时提示', autoPrompt.includes('一级 / 二级问题'))
+  const missingPrompt = buildAutoScanPrompt(['src/pages'], ['src/pages/Home.tsx'], 'missing')
+  check('无画像时 R7 要求写入草稿且不问确认',
+    missingPrompt.includes('status=draft') && missingPrompt.includes('不要问「这些用户对吗」'), missingPrompt)
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

@@ -33,11 +33,15 @@ export interface PersonaCapability {
   accessibility_needs: string[]
 }
 
+/** 画像文件的确认状态：推断草稿可先走查，用户确认后升为 confirmed。 */
+export type PersonaStatus = 'draft' | 'confirmed'
+
 /**
- * 一个目标用户画像。走查的**前置输入**：无 persona 不出结论。
+ * 一个目标用户画像。走查的**前置输入**：没有可推断的用户才不出结论。
  *
- * 约束（spec §5.1）：AI 推断的画像只能作为草稿，必须经用户确认或修改后才
- * 写入文件并生效；锚点优先级为 用户填写 > README/落地页/产品文案 > 代码结构。
+ * 推断草稿可以先用于走查（尤其是改动触发的自动走查，不能打断人）；
+ * 用户主动走查时用一张短卡片确认，确认后升为 `confirmed`。
+ * 锚点优先级：用户填写 > README/落地页/产品文案 > 代码结构。
  */
 export interface Persona {
   /** 稳定 id（小写字母/数字/连字符），被 UXFinding.technical.persona_refs 引用。 */
@@ -57,7 +61,15 @@ export interface Persona {
 
 /** `.ux/personas.yml` 的根结构。 */
 export interface PersonaFile {
+  /** 缺省视为已确认，兼容旧文件。 */
+  status?: PersonaStatus
   personas: Persona[]
+}
+
+/** 从磁盘读出的画像文件（status 已归一）。 */
+export interface LoadedPersonas {
+  status: PersonaStatus
+  personas: readonly Persona[]
 }
 
 // ── UXFinding ────────────────────────────────────────────────────────────────

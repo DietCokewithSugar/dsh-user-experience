@@ -10,9 +10,9 @@
 
 Existing automated checks (axe, Lighthouse) can only verify absolute rules — contrast ratio, missing alt text. But UX issues are inherently **relative**: a confirmation dialog before deleting protects an occasional user but wastes the time of an operator who processes hundreds of records a day. Without knowing *who it's for*, a "UX issue" cannot be defined.
 
-This plugin makes **target user personas** a prerequisite for the walkthrough: every finding is anchored to an explicit persona, and no persona means no conclusions. By having AI walk through the product as those users, it surfaces experience problems **during development** and gives concrete, locatable, reviewable optimization suggestions—not post-launch user feedback.
+This plugin makes **target user personas** the basis of every finding. If the project has no personas yet, the plugin infers a short draft from the README and routes—there is no setup command. By having AI walk through the product as those users, it surfaces experience problems **during development** and gives concrete, locatable, reviewable optimization suggestions—not post-launch user feedback.
 
-**It is a pipeline, not a CLI.** Edit a front-end file and the walkthrough runs itself — no command to remember, no step-by-step approvals. The report card leads with plain language (which page, what happened, how bad), and folds file paths and rule IDs into a "technical details" block you can copy straight to an AI in one click. Verdicts need no IDs either: click a button, or just say "the second one isn't a problem" or "ignore everything below level three".
+**It is a pipeline, not a CLI.** Speak in plain language, or just edit a front-end file. There is no `/ux` command to learn. The report card leads with plain language (which page, what happened, how bad), and folds file paths and rule IDs into a "technical details" block you can copy straight to an AI in one click. Verdicts need no IDs either: click a button, or just say "the second one isn't a problem" or "ignore everything below level three".
 
 ## Install in Harness
 
@@ -70,13 +70,13 @@ The report card and confirmation workflow can use the developer’s language (in
 
 | Capability | Entry point | Description |
 |---|---|---|
-| Persona init | `/ux init` | The model generates 1–3 persona drafts from README / package.json / route structure and writes them to `.ux/personas.yml` **after user confirmation**; loads directly when the file already exists, without re-asking |
+| Natural-language walkthrough | just talk | Say “check the checkout flow” or “is this page usable?”. If personas are missing, the model drafts 1–3 from the README, asks “look through these users’ eyes?”, then walks immediately after you confirm |
 | Persona context injection | automatic | Injects the active personas and walkthrough protocol into every request for the current project (aligned with the AGENTS.md section-provider pattern) |
-| Source and CSS walkthrough | `/ux scan` | Confirms scope first, then walks each persona independently and merges one report; 27 rules based on Nielsen’s heuristics, with model judgment and AST/CSS verification |
+| Source and CSS walkthrough | automatic | After scope is clear, walks each persona independently and merges one report; 27 rules based on Nielsen’s heuristics, with model judgment and AST/CSS verification |
 | Product-specific focus | automatic | Infers `consumer`, `enterprise`, `ecommerce`, `content`, `finance`, `healthcare`, `developer-tool`, `internal-tool`, or `other` from project docs and the scoped flow, then applies the corresponding UX priorities |
 | Multi-level evidence | automatic | `static` for source/CSS, `rendered` for real screenshots/DOM/measurements, and `interactive` for a recorded persona task. Missing browser capability degrades gracefully to static |
 | Output language | automatic / config | Uses an explicit `outputLanguage` override first; in `auto`, follows the current user's language when supplied by the agent, then the project's primary README. Report cards and AI handoff Prompts support Chinese and English |
-| **Change-triggered walkthrough** | automatic | After you edit a front-end file, the turn wraps up by walking **the whole component / page that file belongs to** — not the changed lines (missing-state issues do not exist in a diff). Reports quietly; speaks up only for level-one / level-two issues |
+| **Change-triggered walkthrough** | automatic | After you edit a front-end file, the turn wraps up by walking **the whole component / page that file belongs to** — not the changed lines. Never asks about personas or scope. Missing personas are inferred as drafts. Speaks up only for level-one / level-two issues |
 | Report card | automatic | The first screen is plain language only: `[Level one] Admin page` + one sentence on what happened + what the user runs into. File paths, rule IDs and internal numbering live behind "technical details", which expands to structured YAML you can copy to an AI in one click |
 | Finding confirmation loop | card buttons / plain speech | Click Confirmed / Not an issue, or just say "the second one isn't a problem", "those are all right", "ignore everything below level three" — **no ID is ever needed**; verdicts go to the session log and fully restore on replay |
 | AI task Prompt after confirmation | card button | Once a user confirms a finding, copy a ready-to-use Prompt that describes the observed behavior, affected scenario, user impact, and acceptance goal. It does **not** prescribe code changes, warns that the plugin saw only part of the codebase, and allows UI copy edits |
@@ -89,10 +89,10 @@ The report card and confirmation workflow can use the developer’s language (in
 | Mode | Behavior | When it applies |
 |---|---|---|
 | `auto` | Runs to completion, reports, never interrupts or asks for confirmation | CI / headless; **change-triggered walkthroughs** (the agent started it, so the agent digests it) |
-| `review` | Reports, then offers one batch confirmation (tick several, submit together) | A user-initiated `/ux scan` |
+| `review` | Reports, then offers one batch confirmation (tick several, submit together) | A user-initiated walkthrough in plain language |
 | `interactive` | Confirms one finding at a time | Opt in manually when tuning rules |
 
-Resolution order: explicit `--mode=` → `mode` in `.ux/rules.local.yml` → plugin config → context detection.
+Resolution order: `mode` in `.ux/rules.local.yml` → plugin config → context detection.
 
 ### The five-state finding machine
 
@@ -222,13 +222,17 @@ A user's `.ux/rules.local.yml` takes precedence over this layer.
 
 ## Usage
 
+Just talk. There is no slash command to learn:
+
 ```text
-/ux init                                        # Initialize target personas (draft → confirm → write)
-/ux scan Order flow from selection to payment   # Start a walkthrough (confirm scope first, then walk per persona)
-/ux scan Admin page --mode=auto                 # Pin the run mode (omit it and the mode is picked by context)
+check the checkout flow from selection to payment
+we mostly build this for operators
+the second one isn't a problem
 ```
 
-Once the report is up, **click the card buttons or just talk**:
+If the project has no personas yet, the first walkthrough shows a short card (“look through these users’ eyes?”). After you say “those are fine” or change one line, the walkthrough continues. Later teammates pick up `.ux/personas.yml` from git and never see that step.
+
+Once the report is up, **click the card buttons or keep talking**:
 
 ```text
 the second one isn't a problem
@@ -251,7 +255,7 @@ pnpm run test:singleton  # pack into a temporary profile and verify shared runti
 ```
 
 - **Compatibility baseline**: local build/tests use `@deepseek-ai/dsh-*@0.1.0-rc.6` and `@deepseek-ai/cordis@4.0.1`; runtime framework packages are peers resolved from the profile (`>=0.1.0-rc.6 <0.2.0` for DSH).
-- Structure: `src/index.ts` is the Host plugin (commands + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.
+- Structure: `src/index.ts` is the Host plugin (hidden card-button channel + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.
 - Red line: the agent loop is untouched — all capabilities hang on documented extension points (`ctx.commands` / `ctx.systemPrompt.section()` / `ctx.tools.register()` / `SessionEventMap` / `tools/result` / `agent/turn-stopping`). The automatic walkthrough uses the framework's own `/loop` shape: a listener calls `agent.steer()` at the turn's stop boundary and the machine re-reads its inbox for one more step.
 
 ## License

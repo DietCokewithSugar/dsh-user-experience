@@ -104,12 +104,11 @@ export function OrderList() {
   const session = Session.create(SessionId('e2e-session'), undefined, {
     version: 0, id: SessionId('e2e-session'), createdAt: Date.now(), cwd: root,
   })
-  const followed: unknown[] = []
   const steered: unknown[] = []
   const agent: StubAgent = {
     id: 'e2e-session',
     session,
-    followup: (m) => followed.push(m),
+    followup: () => {},
     steer: (m) => steered.push(m),
   }
 
@@ -358,7 +357,7 @@ async function remove(id: string) {
 
   // ── 3b. /ux judge 脚本接口：卡片按钮的通道（显式 reportId + 逗号分隔批量）──
   console.log('/ux judge（脚本接口）')
-  const command = createUxCommand('detect', 'zh-CN')
+  const command = createUxCommand('zh-CN')
   const judgedIds = reportFindings
     .filter((f) => f.technical.severity.level === 'P0')
     .map((f) => f.id)
@@ -405,8 +404,8 @@ async function remove(id: string) {
     && !String(secondReport.markdown).includes('逐条确认'), String(secondReport.markdown))
   check('auto 模式仍会为一级问题提示一句', String(secondReport.markdown).includes('一级 / 二级问题'))
 
-  // ── 5. /ux scan 无 persona 时拦截（新建会话、空项目）────────────────────────
-  console.log('/ux 命令')
+  // ── 5. 用户侧命令不再发起走查，只引导自然语言 ────────────────────────────
+  console.log('/ux 隐藏通道')
   const emptyRoot = mkdtempSync(join(tmpdir(), 'dsh-ux-empty-'))
   try {
     const emptySession = Session.create(SessionId('e2e-empty'), undefined, {
@@ -421,35 +420,20 @@ async function remove(id: string) {
       rawInput: ' scan',
       signal: new AbortController().signal,
     }
-    const blocked = command.handler(scanInvocation) as { kind: string; text: string }
-    check('无 persona 时 /ux scan 拒绝', blocked.kind === 'error')
-    check('拒绝文案引导说话而非敲命令',
-      blocked.text.includes('先初始化') && !blocked.text.includes('/ux init'), blocked.text)
+    const guided = command.handler(scanInvocation) as { kind: string; text: string }
+    check('用户侧 /ux scan 不再拦截或启动走查', guided.kind === 'success')
+    check('引导自然语言且不提 /ux init',
+      guided.text.includes('自然语言') && !guided.text.includes('/ux init'), guided.text)
   } finally {
     rmSync(emptyRoot, { recursive: true, force: true })
   }
 
-  // 帮助文本与提示中不出现 ID 参数格式（spec §8 验收）
   const help = command.handler({
     commandId: null as never, agent: agent as never, rawInput: '', signal: new AbortController().signal,
   } as CommandInvocation) as { text: string }
-  check('/ux help 不含 judge 与 ID 参数',
-    !help.text.includes('judge') && !help.text.includes('报告ID') && !help.text.includes('findingID'), help.text)
-
-  // --mode 显式指定进入走查提示词
-  const modeInvocation: CommandInvocation = {
-    commandId: null as never,
-    agent: agent as never,
-    rawInput: ' scan 订单流程 --mode=auto',
-    signal: new AbortController().signal,
-  }
-  const modeResult = command.handler(modeInvocation) as { kind: string; text: string }
-  check('--mode=auto 生效', modeResult.kind === 'success' && modeResult.text.includes('auto'), modeResult.text)
-  check('走查提示词带模式约束与用户意向', (() => {
-    const last = followed.at(-1) as { content?: Array<{ text?: string }> }
-    const text = last?.content?.[0]?.text ?? ''
-    return text.includes('"auto"') && text.includes('订单流程')
-  })(), JSON.stringify(followed.at(-1)))
+  check('/ux 空输入不含 judge、init、scan 与 ID 参数',
+    !help.text.includes('judge') && !help.text.includes('init') && !help.text.includes('scan')
+    && !help.text.includes('报告ID') && !help.text.includes('findingID'), help.text)
 
   // ── 6. /ux judge 的 latest 解析（不带报告 id 也能落到当前报告）──────────────
   const latestReport = currentReport(session)
@@ -507,6 +491,41 @@ async function remove(id: string) {
     { isError: false, content: [] })
   emit('agent/turn-stopping', { agent, turn: 5, signal: new AbortController().signal })
   check('rules.local.yml 可关闭自动走查', steered.length === disabledBefore, `steered=${steered.length}`)
+
+  const draftRoot = mkdtempSync(join(tmpdir(), 'dsh-ux-draft-'))
+  try {
+    mkdirSync(join(draftRoot, 'src', 'pages'), { recursive: true })
+    writeFileSync(join(draftRoot, 'package.json'), JSON.stringify({ name: 'draft-app', dependencies: { react: '18.2.0' } }))
+    writeFileSync(join(draftRoot, 'src', 'pages', 'Home.tsx'), 'export function Home() { return <button>确定</button> }')
+    const draftSession = Session.create(SessionId('e2e-draft'), undefined, {
+      version: 0, id: SessionId('e2e-draft'), createdAt: Date.now(), cwd: draftRoot,
+    })
+    const draftSteered: unknown[] = []
+    const draftAgent: StubAgent = {
+      id: 'e2e-draft', session: draftSession, followup: () => {}, steer: (m) => draftSteered.push(m),
+    }
+    const draftHandlers = new Map<string, Handler[]>()
+    const draftCtx = {
+      on: (event: string, handler: Handler) => {
+        draftHandlers.set(event, [...(draftHandlers.get(event) ?? []), handler])
+        return () => {}
+      },
+    }
+    registerAutoScan(draftCtx as never, TEST_CONFIG)
+    const emitDraft = (event: string, ...args: unknown[]): void => {
+      for (const handler of draftHandlers.get(event) ?? []) handler(...args)
+    }
+    emitDraft('tools/result',
+      { name: 'edit', arguments: { file_path: join(draftRoot, 'src/pages/Home.tsx') }, agent: draftAgent },
+      { isError: false, content: [] })
+    emitDraft('agent/turn-stopping', { agent: draftAgent, turn: 1, signal: new AbortController().signal })
+    const draftText = ((draftSteered.at(-1) as { content?: Array<{ text?: string }> })?.content?.[0]?.text) ?? ''
+    check('无画像时自动走查仍触发', draftSteered.length === 1, `steered=${draftSteered.length}`)
+    check('无画像时要求写入草稿且不提问',
+      draftText.includes('status=draft') && draftText.includes('不要向用户提问'), draftText)
+  } finally {
+    rmSync(draftRoot, { recursive: true, force: true })
+  }
 
   // ── 8. 客户端报告状态机（R4 重放核心）───────────────────────────────────────
   console.log('ConversationNodeDefinition（客户端状态机）')

@@ -1,10 +1,9 @@
 /**
- * `ux_personas_write` 工具（spec §6 R1）：
+ * `ux_personas_write` 工具：
  *
- * 把用户**确认后**的画像写入 `.ux/personas.yml`。这是 persona 文件的唯一
- * 写入口——AI 推断的画像只能作为草稿，必须经用户确认或修改后才能落盘
- * （spec §5.1 硬约束），该约束由工具描述 + 流程（/ux init 草稿 → 用户确认
- * → 本工具）共同保证。
+ * 把目标用户画像写入 `.ux/personas.yml`。这是 persona 文件的唯一写入口。
+ * - status=draft：自动走查推断的草稿，允许未经用户确认落盘，避免打断写代码；
+ * - status=confirmed：用户主动走查时确认或修改后的正式画像。
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -16,6 +15,7 @@ import { writePersonas } from './persona'
 export interface PersonasWriteResult {
   written: number
   path: string
+  status: 'draft' | 'confirmed'
   language: OutputLanguage
   personas: Array<{ id: string; name: string; share: number }>
 }
@@ -25,15 +25,21 @@ export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
   return defineTool({
     name: 'ux_personas_write',
     description: [
-      '把用户确认后的目标用户画像写入项目根目录 .ux/personas.yml（仓库内一等公民文件，可 git 提交）。',
-      '【硬约束】只能写入用户已确认/修改过的画像：AI 推断的画像仅是草稿，未经用户确认禁止调用本工具。',
+      '把目标用户画像写入项目根目录 .ux/personas.yml（仓库内一等公民文件，可 git 提交）。',
+      'status=draft：改动触发的自动走查可在未打扰用户的情况下写入推断草稿。',
+      'status=confirmed：仅在用户主动走查并确认/修改画像后使用。不要让用户敲任何斜杠命令。',
       '画像 id 使用小写字母/数字/连字符；share 为占目标用户比例估计（(0,1]，全量画像之和宜 ≈ 1）。',
-      '文件已存在时本调用整体覆盖（用户明确表示修改/增删画像后使用）。',
+      '文件已存在时本调用整体覆盖。',
     ].join(' '),
     parameters: {
       language: {
         type: 'string',
         description: '输出语言（zh-CN 或 en）；跟随当前用户语言。',
+      },
+      status: {
+        type: 'string',
+        description: 'draft=推断草稿（自动走查）；confirmed=用户已确认。缺省 confirmed。',
+        enum: ['draft', 'confirmed'],
       },
       personas: {
         type: 'array',
@@ -61,7 +67,7 @@ export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
           },
         },
         required: true,
-        description: '用户确认后的完整画像列表',
+        description: '完整画像列表',
       },
     },
     output: {
@@ -71,6 +77,7 @@ export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
         properties: {
           written: { type: 'number' },
           path: { type: 'string' },
+          status: { type: 'string' },
           language: { type: 'string' },
           personas: {
             type: 'array',
@@ -88,14 +95,23 @@ export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
       },
       render: (_args, value) => {
         const result = value as PersonasWriteResult
+        const draft = result.status === 'draft'
         const lines = isChinese(result.language) ? [
-          `已写入 ${result.written} 个目标用户画像到 ${result.path}（可 git 提交、团队共享）：`,
+          draft
+            ? `已写入 ${result.written} 个草稿画像到 ${result.path}（尚未经用户确认，自动走查可用）：`
+            : `已写入 ${result.written} 个目标用户画像到 ${result.path}（可 git 提交、团队共享）：`,
           ...result.personas.map((persona) => `- [${persona.id}] ${persona.name}（share ${persona.share}）`),
-          '后续走查将以这些画像作为判定依据；文件已存在时会直接加载，不再重复询问。',
+          draft
+            ? '之后用户说画像不对时再覆盖为正式画像。'
+            : '后续走查将以这些画像作为判定依据。',
         ] : [
-          `Wrote ${result.written} target personas to ${result.path} (commit this file to share it with the team):`,
+          draft
+            ? `Wrote ${result.written} draft personas to ${result.path} (usable for automatic walkthroughs, not yet confirmed):`
+            : `Wrote ${result.written} target personas to ${result.path} (commit this file to share it with the team):`,
           ...result.personas.map((persona) => `- [${persona.id}] ${persona.name} (share ${persona.share})`),
-          'Future walkthroughs will use these personas as their evaluation context.',
+          draft
+            ? 'Overwrite with confirmed personas when the user later corrects who the product is for.'
+            : 'Future walkthroughs will use these personas as their evaluation context.',
         ]
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -109,10 +125,12 @@ export function uxPersonasWriteTool(config: UxConfig): ToolDefinition {
       if (cwd === undefined) {
         throw new Error('ux_personas_write：当前会话没有工作目录（cwd），无法定位项目')
       }
-      const written = writePersonas(cwd, args.personas)
+      const status = args.status === 'draft' ? 'draft' : 'confirmed'
+      const written = writePersonas(cwd, args.personas, status)
       return {
         written: written.length,
         path: '.ux/personas.yml',
+        status,
         language: resolveOutputLanguage(cwd, config.outputLanguage, args.language),
         personas: written.map((persona) => ({ id: persona.id, name: persona.name, share: persona.share })),
       } satisfies PersonasWriteResult

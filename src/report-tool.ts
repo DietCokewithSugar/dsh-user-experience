@@ -26,7 +26,7 @@ import { codeSpeakReason } from './human-copy'
 import { isChinese, resolveOutputLanguage, type OutputLanguage } from './i18n'
 import { loadLocalRules } from './local-rules'
 import { resolveMode } from './mode'
-import { loadPersonas } from './persona'
+import { loadPersonaFile } from './persona'
 import { normalizeProductType, productReviewFocus, type ProductType } from './product'
 import { categoryOfRule, isRuleId, RULE_BY_ID } from './rules'
 import { takeScope } from './scope'
@@ -73,6 +73,8 @@ export interface ReportResult {
   stale: number
   glossary_terms: number
   markdown: string
+  /** 本次走查使用的画像确认状态。 */
+  persona_status: 'draft' | 'confirmed'
 }
 
 /** 实例 token：跨进程重启的报告 id 也不会重复。 */
@@ -115,6 +117,11 @@ function renderReport(result: ReportResult, personas: ReadonlyMap<string, string
     `> ${zh ? '本类产品重点' : 'Product-specific focus'}: ${focus}`,
     '',
   ]
+  if (result.persona_status === 'draft') {
+    lines.push(zh
+      ? '> 本次按草稿画像走查。画像不对可以直接说。'
+      : '> This walkthrough used draft personas. Say so if they are wrong.', '')
+  }
   const findings = [...result.findings].sort(bySeverity)
   const common = findings.filter(isCommon)
   if (common.length > 0) {
@@ -447,6 +454,7 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
           implicit_confirmed: { type: 'number' },
           stale: { type: 'number' },
           glossary_terms: { type: 'number' },
+          persona_status: { type: 'string' },
           markdown: { type: 'string' },
         },
       },
@@ -464,10 +472,11 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
       if (cwd === undefined) {
         throw new Error('ux_report：当前会话没有工作目录（cwd），无法定位项目')
       }
-      const personas = loadPersonas(cwd)
-      if (personas === undefined) {
-        throw new Error('ux_report：项目还没有目标用户画像（.ux/personas.yml 不存在）。请先让用户确认画像再走查——无 persona 不出结论。')
+      const loaded = loadPersonaFile(cwd)
+      if (loaded === undefined) {
+        throw new Error('ux_report：项目还没有目标用户画像。请先根据 README 推断草稿并调用 ux_personas_write（自动走查用 status=draft；用户主动走查须确认后写入）。不要让用户敲命令。')
       }
+      const personas = loaded.personas
       const personaNames = new Map(personas.map((persona) => [persona.id, persona.name]))
       const shareById = new Map(personas.map((persona) => [persona.id, persona.share]))
 
@@ -717,6 +726,7 @@ export function uxReportTool(config: UxConfig): ToolDefinition {
         implicit_confirmed: verdicts.filter((verdict) => verdict.status === 'confirmed_implicit').length,
         stale: verdicts.filter((verdict) => verdict.status === 'stale').length,
         glossary_terms: glossaryTerms,
+        persona_status: loaded.status,
         markdown: '',
       }
       result.markdown = renderReport(result, personaNames)
