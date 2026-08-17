@@ -44,9 +44,6 @@ const blockedLifecycle = [
   'preinstall',
   'install',
   'postinstall',
-  'prepare',
-  'prepublish',
-  'prepublishOnly',
 ]
 for (const name of blockedLifecycle) {
   if (pkg.scripts?.[name]) {
@@ -54,13 +51,15 @@ for (const name of blockedLifecycle) {
   }
 }
 
+// 发布产物由 `pnpm run build` 生成、由 release 工作流打进 npm tarball。
+// 仓库不再提交 lib/，所以这里只要求"构建过"，不要求"已提交"。
 const hostBundle = join(root, 'lib', 'index.js')
 const clientBundle = join(root, 'lib', 'client.js')
 if (!existsSync(hostBundle)) {
-  failures.push('lib/index.js must be committed so GitHub installs can load without a build script')
+  failures.push('lib/index.js missing — run `pnpm run build` before packing or testing')
 }
 if (!existsSync(clientBundle)) {
-  failures.push('lib/client.js must be committed so GitHub installs can load without a build script')
+  failures.push('lib/client.js missing — run `pnpm run build` before packing or testing')
 }
 
 if (existsSync(hostBundle)) {
@@ -84,5 +83,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`)
   process.exitCode = 1
 } else {
-  console.log('Package singleton contract passed: Harness, Cordis, and React stay host-owned peers; GitHub installs use committed lib/ with no lifecycle scripts.')
+  console.log('Package singleton contract passed: Harness, Cordis, and React stay host-owned peers; no consumer-install lifecycle scripts; build artifacts present.')
 }

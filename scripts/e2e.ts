@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createElement, type ComponentType } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { Context } from '@deepseek-ai/cordis'
+import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { apply } from '../src/index'
 import { writePersonas } from '../src/persona'
@@ -377,6 +379,38 @@ async function remove(id: string) {
   } as CommandInvocation) as { kind: string; text: string }
   check('判定接口的错误提示引导点按钮 / 说话，不给命令格式',
     badArgs.kind === 'error' && !badArgs.text.includes('<') && badArgs.text.includes('按钮'), badArgs.text)
+
+  // ── 3c. 真实注册表契约：把命令喂给真的 CommandRuntime ──────────────────────
+  //
+  // v0.4.0 曾经用 `input: { hint: '' }` 表达"命令栏不给提示"，字符串断言全部
+  // 通过，但真实注册表拒绝空 hint，插件 apply 第一行就抛，整个插件行起不来。
+  // 这里不再用 stub：真的 boot 一个 cordis Context + CommandRuntime 注册一次，
+  // 名称 / 描述 / handler / input 的完整契约由 Harness 自己来判。
+  console.log('命令注册表契约（真实 CommandRuntime）')
+  const registryCtx = new Context()
+  registryCtx.plugin(CommandRuntime)
+  await new Promise((resolve) => { setTimeout(resolve, 50) })
+  let registrationError = ''
+  try {
+    registryCtx.commands.register(createUxCommand('zh-CN'))()
+  } catch (error) {
+    registrationError = error instanceof Error ? error.message : String(error)
+  }
+  check('createUxCommand() 能被真实 CommandRuntime 接受',
+    registrationError === '', registrationError)
+  check('空 hint 确实会被真实注册表拒绝（守卫本身有效）', (() => {
+    try {
+      registryCtx.commands.register({
+        name: 'ux-probe',
+        description: '守卫自检',
+        input: { hint: '' },
+        handler: () => ({ kind: 'success' as const }),
+      })()
+      return false
+    } catch {
+      return true
+    }
+  })())
 
   // ── 4. 隐式确认：问题被改掉后下一轮走查 ─────────────────────────────────────
   console.log('隐式确认')

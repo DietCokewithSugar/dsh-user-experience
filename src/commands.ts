@@ -73,13 +73,18 @@ function runSubcommand(
 
 /**
  * 注册隐藏的 `/ux` 判定通道。
- * 命令栏若仍能看到它，hint 故意留空，避免再教 init / scan。
+ *
+ * 命令栏若仍能看到它，也不该再教 init / scan——所以整个 `input` 字段直接省略。
+ * 注意不要退回 `input: { hint: '' }`：`CommandDefinition.input` 是可选的，
+ * 省略表示"没有输入提示"，而空串表示"提示是空的"，后者违反注册表契约——
+ * `dsh-commands` 的 normalizeDefinition() 会抛
+ * `command "ux" input hint must not be empty`，插件 apply 的第一行就失败，
+ * 整个插件行起不来。
  */
 export function createUxCommand(language: ConfiguredLanguage = 'auto'): CommandDefinition {
   return {
     name: 'ux',
     description: '内部判定通道（报告卡片使用）',
-    input: { hint: '' },
     recordInput: true,
     handler: (invocation) => runSubcommand(invocation, language),
   }
