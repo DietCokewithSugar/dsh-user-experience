@@ -20,23 +20,19 @@
 
 在 DeepSeek Harness 中输入：
 
-> 在 DeepSeek Harness 上安装用户体验插件：`dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience`
+> 在 DeepSeek Harness 上安装用户体验插件：`dsh plugin --profile web add dsh-user-experience@0.4.2`
 
 也可以直接执行：
 
 ```sh
-dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
+dsh plugin --profile web add dsh-user-experience@0.4.2
 ```
 
-若市场报 `getRepoRefs` / `resolveGit`（常见于 Windows + pnpm 11），请改用 **40 位完整 commit**。这样会跳过 `git ls-remote … HEAD HEAD^{}`，部分 Git for Windows 会因为这条命令直接失败：
+请写明确版本号，不要用 `@latest`：pnpm 11 会压住 24 小时内发布的新版本，`@latest` 在新 profile 上可能解析不到任何东西。更新的版本见 [npm 版本列表](https://www.npmjs.com/package/dsh-user-experience?activeTab=versions)。
 
-```sh
-dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience#57fe06eb8bc1313a931bfb50eb2416c52bb1fdea
-```
+安装成功后刷新页面即可，不必重启。仅当市场提示无法热加载时，再重启或重新加载 `web` profile。安装前请阅读下方[安全提示](#安装)。
 
-若要装更新的版本，到 [`main` 提交记录](https://github.com/DietCokewithSugar/dsh-user-experience/commits/main) 复制最新 SHA。若上次失败已经把 `dsh-user-experience` 写进了 profile 的 `package.json`，先删掉那一行再装。
-
-安装成功后刷新页面即可，不必重启。仓库已提交预构建 `lib/`，从 GitHub 安装时不会执行构建脚本，pnpm 也不会拦截。仅当市场提示无法热加载时，再重启或重新加载 `web` profile。生产环境建议锁定可信 commit；安装前请阅读下方[安全提示](#安装)。
+> **从旧的 `github:` 安装升级？** 早期版本是从 Git ref 安装的。先把 profile 的 `package.json` 里那行 `"dsh-user-experience": "github:DietCokewithSugar/…"` 删掉，再从 npm 安装，避免 profile 里同时挂着两份。
 
 ## 界面预览
 
@@ -194,15 +190,17 @@ autoScan:
 
 > ⚠️ **安全提示（必读）**
 >
-> 从 GitHub 安装会拉取本仓库**以及已提交的 `lib/` 预构建产物**。包内**没有 `prepare` / `preinstall` / `postinstall` 脚本**，因此 pnpm ≥ 10 不会弹出「构建脚本被拦截」。安装阶段不会在你的机器上编译 TypeScript。
+> npm tarball 内含预构建产物。包内**没有 `prepare` / `preinstall` / `postinstall` 脚本**，因此 pnpm ≥ 10 不会弹出「构建脚本被拦截」。安装阶段不会在你的机器上编译 TypeScript。
 >
 > 插件激活后仍会在 Harness 进程中运行其代码。因此：
 > 1. **只安装你信任来源的插件**；
-> 2. **锁定 commit**，防止后续推送悄悄改变你加载的代码：
+> 2. **锁定确切版本号**，防止后续发布悄悄改变你加载的代码：
 >
 > ```sh
-> dsh plugin --profile <你的profile> add github:DietCokewithSugar/dsh-user-experience#<commit-sha>
+> dsh plugin --profile <你的profile> add dsh-user-experience@0.4.2
 > ```
+>
+> 每个已发布版本都由 [release 工作流](.github/workflows/release.yml)从对应 tag 构建；同一份 tarball 会附在对应的 [GitHub Release](https://github.com/DietCokewithSugar/dsh-user-experience/releases) 上，可自行与源码比对。
 
 ### 与其他插件共存
 
@@ -210,7 +208,7 @@ Harness、Cordis 和 React 都是**由宿主 profile 提供的 peer dependency**
 
 - 不设置 `overrides`、`packageExtensions`，不重写 profile 依赖
 - 不修改 Node.js 或 React 版本
-- 安装时不执行 lifecycle 脚本；GitHub 安装直接加载已提交的 `lib/`，不执行 `pnpm/npm install`、`add`、`update` 或 `upgrade`
+- 安装时不执行 lifecycle 脚本；发布的 tarball 直接携带预构建产物，不执行 `pnpm/npm install`、`add`、`update` 或 `upgrade`
 - DSH 使用兼容 peer 范围，不会把本仓库的开发版本强行装入 profile
 - CI 会把打包产物安装到临时 profile，逐项验证插件与 profile 解析到的 Harness、Cordis 和 React 真实路径完全相同
 
@@ -270,7 +268,7 @@ pnpm test          # 冒烟测试（AST/CSS / 证据等级 / 语言适配 / pers
 pnpm run test:singleton  # 打包到临时 profile，验证共享运行时身份
 ```
 
-`lib/` 已提交进仓库，因此 `dsh plugin add github:…` 安装时不必跑 `prepare`。改完 `src/` 后请重新构建并提交更新后的 `lib/`；CI 会在产物漂移时失败。
+`lib/` 是构建产物，不进仓库——跑 `pnpm test` 前先 `pnpm run build`。发版靠打 tag：改 `package.json` 的 `version`，然后推一个 `v<version>` tag。[release 工作流](.github/workflows/release.yml)会构建、测试、打包、发布到 npm，并把 tarball 附到 GitHub Release；tag 与 `package.json` 版本不一致、或缺少 `NPM_TOKEN` 时会直接失败。
 
 - **兼容性基线**：本地构建与测试使用 `@deepseek-ai/dsh-*@0.1.0-rc.6` 和 `@deepseek-ai/cordis@4.0.1`；运行时框架包由 profile 通过 peer 提供（DSH 范围为 `>=0.1.0-rc.6 <0.2.0`）。
 - 结构：`src/index.ts` 为 Host 插件（卡片按钮的隐藏判定通道 + 提示词注入 + 四个模型工具 + 改动触发的自动走查）；`src/client/` 为 Web 客户端插件（报告卡片，经 `dsh.client` 声明被模块表发现）；一个 bundle 行（`cordis.patch.yml`）同时挂载两者。

@@ -25,9 +25,23 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - name: Keep committed lib/ in sync with source
-        run: git diff --exit-code -- lib
       - run: pnpm test
+      - run: pnpm run test:singleton
+      # 没有 token 就静默跳过发布，是这个仓库长期"以为发了、其实没发"的原因。
+      # 打了 tag 却发不出去，必须让工作流红掉。
+      - name: Require NPM_TOKEN on tag builds
+        if: startsWith(github.ref, 'refs/tags/') && env.NODE_AUTH_TOKEN == ''
+        run: |
+          echo "::error::NPM_TOKEN is not set — add it under Settings → Secrets and variables → Actions, then re-run this tag build."
+          exit 1
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "refs/tags/v${version}" != "${GITHUB_REF}" ]; then
+            echo "::error::tag ${GITHUB_REF#refs/tags/} does not match package.json version ${version}"
+            exit 1
+          fi
       - run: pnpm pack --pack-destination .
       - name: Stable tarball name for GitHub Releases
         run: |

@@ -432,6 +432,12 @@ function confirmRemove() {
     return !text.includes('init') && !text.includes('scan') && !text.includes('judge')
       && !text.includes('报告ID') && !text.includes('findingID')
   })())
+  // "不给提示"必须靠省略 input 表达，不能靠空串——空串会被真实注册表拒绝。
+  // 真正的注册在 e2e.ts 用真的 CommandRuntime 跑，这里只守住形状。
+  check('命令要么省略 input，要么给非空 hint', (() => {
+    const { input } = commands[0] as { input?: { hint?: string } }
+    return input === undefined || (input.hint ?? '').trim().length > 0
+  })())
   check('依赖注入声明 = tools/commands/systemPrompt', inject.join(',') === 'tools,commands,systemPrompt')
 
   // ── 8. 运行模式与场景自动选择（v0.1.1 §4.2）──────────────────────────────────

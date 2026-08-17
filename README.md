@@ -20,23 +20,19 @@ This plugin makes **target user personas** the basis of every finding. If the pr
 
 In DeepSeek Harness, enter:
 
-> Install the UX plugin in DeepSeek Harness: `dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience`
+> Install the UX plugin in DeepSeek Harness: `dsh plugin --profile web add dsh-user-experience@0.4.2`
 
 Or run the command directly:
 
 ```sh
-dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience
+dsh plugin --profile web add dsh-user-experience@0.4.2
 ```
 
-If the market fails with `getRepoRefs` / `resolveGit` (common on Windows with pnpm 11), pin a **40-character commit**. That skips `git ls-remote … HEAD HEAD^{}`, which some Git for Windows builds reject:
+Name an exact version rather than `@latest`: pnpm 11 holds back releases published in the last 24 hours, so `@latest` can resolve to nothing on a fresh profile. Check the [npm version list](https://www.npmjs.com/package/dsh-user-experience?activeTab=versions) for newer releases.
 
-```sh
-dsh plugin --profile web add github:DietCokewithSugar/dsh-user-experience#57fe06eb8bc1313a931bfb50eb2416c52bb1fdea
-```
+After a successful install, refresh the page. A restart is not required — restart or reload the `web` profile only if the market says it could not hot-load the plugin. Before installing, please read the [security note](#installation).
 
-Copy a newer SHA from the [`main` commit list](https://github.com/DietCokewithSugar/dsh-user-experience/commits/main) if you want the latest. If an earlier failed install left `dsh-user-experience` in the profile `package.json`, delete that line first, then retry.
-
-After a successful install, refresh the page. A restart is not required. This repository ships prebuilt `lib/` artifacts, so GitHub installs do not run a build script and pnpm will not block them. Restart or reload the `web` profile only if the market says it could not hot-load the plugin. Pin a trusted commit for production use; see the [security note](#installation).
+> **Upgrading from a `github:` install?** Earlier versions were installed from a Git ref. Remove that entry from the profile's `package.json` (the line reading `"dsh-user-experience": "github:DietCokewithSugar/…"`) before installing from npm, so the profile does not carry both.
 
 ## Screenshots
 
@@ -194,15 +190,17 @@ autoScan:
 
 > ⚠️ **Security note (must read)**
 >
-> GitHub installs fetch this repository **including the committed `lib/` artifacts**. There is **no `prepare` / `preinstall` / `postinstall` script**, so pnpm ≥ 10 will not ask you to allowlist a build. Installation does not compile TypeScript on your machine.
+> The npm tarball ships prebuilt artifacts. There is **no `prepare` / `preinstall` / `postinstall` script**, so pnpm ≥ 10 will not ask you to allowlist a build. Installation does not compile TypeScript on your machine.
 >
 > Activating the plugin still runs its code inside the Harness process. Therefore:
 > 1. **Only install plugins from sources you trust**;
-> 2. **Pin a commit** so later pushes cannot silently change what you load:
+> 2. **Pin an exact version** so later releases cannot silently change what you load:
 >
 > ```sh
-> dsh plugin --profile <your-profile> add github:DietCokewithSugar/dsh-user-experience#<commit-sha>
+> dsh plugin --profile <your-profile> add dsh-user-experience@0.4.2
 > ```
+>
+> Every published version is built from a tagged commit by the [release workflow](.github/workflows/release.yml); the same tarball is attached to the corresponding [GitHub Release](https://github.com/DietCokewithSugar/dsh-user-experience/releases) if you want to diff it against the source.
 
 ### Coexisting with other plugins
 
@@ -210,7 +208,7 @@ Harness, Cordis, and React are **host-owned peer dependencies**. This package do
 
 - No `overrides`, `packageExtensions`, or profile dependency rewrites
 - No Node.js or React version changes
-- No install-time lifecycle scripts; GitHub installs load committed `lib/` artifacts and do not run `pnpm/npm install`, `add`, `update`, or `upgrade`
+- No install-time lifecycle scripts; the published tarball ships prebuilt artifacts and does not run `pnpm/npm install`, `add`, `update`, or `upgrade`
 - Compatible DSH release candidates are accepted through peer ranges instead of forcing this plugin's development version into the profile
 - CI installs a packed copy into a temporary profile and verifies that the profile and plugin resolve identical real paths for Harness, Cordis, and React packages
 
@@ -270,7 +268,7 @@ pnpm test          # smoke tests (AST/CSS / evidence levels / localization / per
 pnpm run test:singleton  # pack into a temporary profile and verify shared runtime identities
 ```
 
-`lib/` is committed so `dsh plugin add github:…` can load without a `prepare` script. After changing `src/`, rebuild and commit the updated `lib/` artifacts; CI fails if they drift.
+`lib/` is a build artifact and is not committed — run `pnpm run build` before `pnpm test`. Releases are cut by tagging: bump `version` in `package.json`, then push a `v<version>` tag. The [release workflow](.github/workflows/release.yml) builds, tests, packs, publishes to npm, and attaches the tarball to a GitHub Release; it fails loudly if the tag and `package.json` version disagree, or if `NPM_TOKEN` is missing.
 
 - **Compatibility baseline**: local build/tests use `@deepseek-ai/dsh-*@0.1.0-rc.6` and `@deepseek-ai/cordis@4.0.1`; runtime framework packages are peers resolved from the profile (`>=0.1.0-rc.6 <0.2.0` for DSH).
 - Structure: `src/index.ts` is the Host plugin (hidden card-button channel + prompt injection + four model tools + the change-triggered walkthrough); `src/client/` is the Web client plugin (report card, discovered by the module table via the `dsh.client` declaration); one bundle row (`cordis.patch.yml`) mounts both.
