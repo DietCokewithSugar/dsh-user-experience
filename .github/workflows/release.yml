@@ -14,11 +14,17 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
+      # Fallback only. Once a trusted publisher is configured on npmjs.com the
+      # publish authenticates over OIDC and this secret can be deleted, along
+      # with this line — a granular token cannot clear npm's 2FA challenge from
+      # a non-interactive runner anyway.
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # v6 is the first release that plumbs the OIDC id-token through to the
+      # registry, which trusted publishing needs.
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -27,13 +33,6 @@ jobs:
       - run: pnpm run build
       - run: pnpm test
       - run: pnpm run test:singleton
-      # 没有 token 就静默跳过发布，是这个仓库长期"以为发了、其实没发"的原因。
-      # 打了 tag 却发不出去，必须让工作流红掉。
-      - name: Require NPM_TOKEN on tag builds
-        if: startsWith(github.ref, 'refs/tags/') && env.NODE_AUTH_TOKEN == ''
-        run: |
-          echo "::error::NPM_TOKEN is not set — add it under Settings → Secrets and variables → Actions, then re-run this tag build."
-          exit 1
       - name: Verify tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -42,7 +41,12 @@ jobs:
             echo "::error::tag ${GITHUB_REF#refs/tags/} does not match package.json version ${version}"
             exit 1
           fi
-      - run: pnpm pack --pack-destination .
+      # Node 22 ships npm 10, which predates OIDC support; trusted publishing
+      # needs npm >= 11.5.1. Installed before packing so the Release asset and
+      # the published tarball come out of the same packer and stay comparable.
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+      - run: npm pack --pack-destination .
       - name: Stable tarball name for GitHub Releases
         run: |
           version="$(node -p 'require("./package.json").version')"
@@ -56,6 +60,13 @@ jobs:
           files: |
             dsh-user-experience.tgz
             dsh-user-experience-*.tgz
+      # `pnpm publish` is deliberately not used here: pnpm 11 fails its OIDC
+      # token exchange with a 404 and then falls back to the token, which
+      # cannot clear npm's 2FA challenge from a non-interactive runner.
+      # See https://github.com/pnpm/pnpm/issues/11513.
+      #
+      # Gated on tags only, and never on the presence of a token — a tag build
+      # that cannot publish has to go red rather than quietly skip the step.
       - name: Publish to npm
-        if: env.NODE_AUTH_TOKEN != ''
-        run: pnpm publish --access public --no-git-checks
+        if: startsWith(github.ref, 'refs/tags/')
+        run: npm publish --access public

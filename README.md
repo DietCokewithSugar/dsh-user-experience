@@ -32,7 +32,40 @@ Name an exact version rather than `@latest`: pnpm 11 holds back releases publish
 
 After a successful install, refresh the page. A restart is not required — restart or reload the `web` profile only if the market says it could not hot-load the plugin. Before installing, please read the [security note](#installation).
 
-> **Upgrading from a `github:` install?** Earlier versions were installed from a Git ref. Remove that entry from the profile's `package.json` (the line reading `"dsh-user-experience": "github:DietCokewithSugar/…"`) before installing from npm, so the profile does not carry both.
+### Upgrading from a `github:` install
+
+`dsh plugin add github:DietCokewithSugar/dsh-user-experience` **no longer works**. This repository stopped committing `lib/`, so a Git checkout carries no build artifacts, and pnpm blocks the build step by default. The market reports:
+
+```
+安装失败: dsh-user-experience — nothing installable: the plugin(s) need a build step
+(blocked by default, see allowBuilds) or ship no prebuilt artifacts
+```
+
+and the exported log names the Git spec:
+
+```
+[warn]  install: github:DietCokewithSugar/dsh-user-experience: removed uninstallable pieces
+        (no dsh manifest or missing build artifacts): dsh-user-experience
+[error] install: github:DietCokewithSugar/dsh-user-experience: nothing installable survived validation
+```
+
+Install by package name instead — note there is **no `github:` prefix**:
+
+```sh
+dsh plugin --profile web add dsh-user-experience@0.4.2
+```
+
+If the market still resolves the Git ref, the profile is reusing its old entry. Clean it out:
+
+1. Delete the `"dsh-user-experience": "github:DietCokewithSugar/…"` line from the profile's `package.json`.
+2. Delete that profile's `node_modules` **and** `pnpm-lock.yaml`. The lockfile pins the old Git resolution, so removing the dependency line alone is not enough.
+3. Run the install command again.
+
+On Windows, this locates the profile manifest:
+
+```powershell
+Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA,$env:USERPROFILE -Recurse -Filter package.json -Depth 6 -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match 'dsh-user-experience' } | Select-Object FullName
+```
 
 ## Screenshots
 

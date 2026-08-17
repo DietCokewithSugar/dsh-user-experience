@@ -32,7 +32,40 @@ dsh plugin --profile web add dsh-user-experience@0.4.2
 
 安装成功后刷新页面即可，不必重启。仅当市场提示无法热加载时，再重启或重新加载 `web` profile。安装前请阅读下方[安全提示](#安装)。
 
-> **从旧的 `github:` 安装升级？** 早期版本是从 Git ref 安装的。先把 profile 的 `package.json` 里那行 `"dsh-user-experience": "github:DietCokewithSugar/…"` 删掉，再从 npm 安装，避免 profile 里同时挂着两份。
+### 从旧的 `github:` 安装升级
+
+`dsh plugin add github:DietCokewithSugar/dsh-user-experience` **已经不能用了**。仓库不再提交 `lib/`，所以 Git 检出的目录里没有构建产物，而 pnpm 默认拦截构建步骤。市场会报：
+
+```
+安装失败: dsh-user-experience — nothing installable: the plugin(s) need a build step
+(blocked by default, see allowBuilds) or ship no prebuilt artifacts
+```
+
+导出日志里会写明用的是 Git spec：
+
+```
+[warn]  install: github:DietCokewithSugar/dsh-user-experience: removed uninstallable pieces
+        (no dsh manifest or missing build artifacts): dsh-user-experience
+[error] install: github:DietCokewithSugar/dsh-user-experience: nothing installable survived validation
+```
+
+改用包名安装 —— 注意**前面没有 `github:`**：
+
+```sh
+dsh plugin --profile web add dsh-user-experience@0.4.2
+```
+
+如果市场仍然解析到 Git ref，说明 profile 在复用旧条目，清理一遍：
+
+1. 删掉 profile 的 `package.json` 里 `"dsh-user-experience": "github:DietCokewithSugar/…"` 那一行；
+2. 把该 profile 的 `node_modules` **和** `pnpm-lock.yaml` 一起删掉。lockfile 会把旧的 Git 解析结果钉死，只删依赖行不够；
+3. 重新执行安装命令。
+
+Windows 上可以这样定位 profile 的清单文件：
+
+```powershell
+Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA,$env:USERPROFILE -Recurse -Filter package.json -Depth 6 -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match 'dsh-user-experience' } | Select-Object FullName
+```
 
 ## 界面预览
 
